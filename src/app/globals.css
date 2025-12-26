@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Global Design Tokens */
+@layer components {
+  .btn-primary {
+    @apply bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-6 py-2.5 rounded-lg shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:grayscale;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-100 text-slate-900 hover:bg-slate-200 font-semibold px-6 py-2.5 rounded-lg transition-all active:scale-95;
+  }
+
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-slate-100 p-6;
+  }
+
+  .input-field {
+    @apply w-full p-3 rounded-lg border border-slate-200 bg-white placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-slate-900;
+  }
+
+  .text-label {
+    @apply text-xs font-bold text-slate-500 uppercase mb-1 block;
+  }
+
+  .text-body {
+    @apply text-slate-900;
+  }
+}
