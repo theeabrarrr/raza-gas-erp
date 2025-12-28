@@ -31,6 +31,14 @@ export async function middleware(request: NextRequest) {
             url.pathname = '/'
             return NextResponse.redirect(url)
         }
+
+        // RBAC: Driver cannot access Admin routes
+        const role = user.user_metadata?.role || '';
+        if (role === 'driver' && path.startsWith('/admin')) {
+            const url = request.nextUrl.clone()
+            url.pathname = '/driver'
+            return NextResponse.redirect(url)
+        }
     }
 
     return response

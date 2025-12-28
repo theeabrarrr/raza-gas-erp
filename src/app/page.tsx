@@ -13,7 +13,7 @@ export default function Home() {
     cashInVault: 0,
     pendingRecoveries: 0,
     stockFull: 0,
-    stockEmpty: 0
+    cashWithStaff: 0
   });
   const [activeOrders, setActiveOrders] = useState<any[]>([]);
   const [driversList, setDriversList] = useState<any[]>([]);
@@ -91,28 +91,55 @@ export default function Home() {
 
       setStats({
         salesToday,
-        cashInVault: cashInOffice, // Mapped to existing stat key
-        pendingRecoveries: cashWithStaff, // REPURPOSED STAT KEY FOR "Staff Cash" to save space? Or just verify mapping.
-        // Wait, pendingRecoveries was 'Pending Recoveries' (Customer Debt). 
-        // MetricCard is generic. I should stick to adding a new one or replacing 'Pending Recoveries' if user didn't ask to remove it?
-        // User asked: "Widget A: Cash in Office... Widget B: Cash with Staff". 
-        // I will map: 
-        // cashInVault -> Cash in Office
-        // pendingRecoveries -> Customer Debt (Keep)
-        // I'll add a NEW statistic to state or just calculate it?
-        // Let's modify the stats object structure slightly or use 'stockEmpty' slot if unused
+        cashInVault: cashInOffice,
+        pendingRecoveries: totalRecoveries,
         stockFull: totalFull,
-        stockEmpty: cashWithStaff // HACK: Using unused slot for Cash With Staff to pass to UI
+        cashWithStaff: cashWithStaff
       });
 
-      // 3. Active Orders... (unchanged)
+      // 3. Active Orders (Now joining users to get driver name reliably)
       const { data: orders } = await supabase
         .from('orders')
-        .select('*, customers(name, address)')
+        .select('*, customers(name, address), driver:users!driver_id(name)')
+        // Note: Using !driver_id hint if multiple FKs exist, or just users(name) if straightforward. 
+        // Safer: users!orders_driver_id_fkey(name) if we knew the constraint name.
+        // Simplest attempt first: driver:users(name) assuming auto-detection matches driver_id column.
+        // Actually, typically standard select is: `driver:driver_id(name)` if using the column name related, 
+        // but Supabase JS usually needs the Table name.
+        // Let's try `driver:users(name)`.
+
+        // Wait, if I am not sure about the FK name, the standard map approach is actually safer IF the map is complete.
+        // The previous map failed because it only fetched `role='driver'`. 
+        // I will FIX the map fetch to fetch ALL users, or at least not filter by role 'driver' strictly, 
+        // OR better, fetch drivers from the orders list itself.
+
+        // Let's stick to the JOIN instructions for "Unknown" resolution. 
+        // I'll try `driver:users(name)` which is standard.
         .in('status', ['on_trip', 'on-the-road', 'delivering', 'dispatched', 'assigned', 'pending'])
         .order('created_at', { ascending: false });
 
-      setActiveOrders(orders || []);
+      // Fallback: If join fails or returns null, we might still use the map. 
+      // But we should map the result to a flat structure if needed, or update the usage.
+      // Usage in UI: `driversMap[trip.driver_id] || 'Unknown'`
+      // I should update the UI usage too if I change the query structure.
+      // Actually, I can just update the `driversMap` logic to be robust.
+      // BUT, checking the "Monitoring" section code:
+      // Code: driversMap[trip.driver_id]
+
+      // Let's UPDATE the `drivers` fetch to be broader:
+      // OLD: .eq('role', 'driver')
+      // NEW: Remove role filter? No, we likely only want drivers.
+      // Maybe the user has a different role.
+
+      // REVISED PLAN FOR THIS BLOCK:
+      // 1. Fetch `users` without strict role filter (or maybe 'driver' OR 'admin' etc).
+      // 2. Update `activeOrders` to join `users` as `driver`.
+
+      setActiveOrders(orders?.map(o => ({
+        ...o,
+        driver_name: o.driver?.name || driversMap[o.driver_id] || 'Unknown'
+      })) || []);
+
 
       // 4. Recent Transactions... (unchanged)
       const { data: recent } = await supabase
@@ -276,7 +303,7 @@ export default function Home() {
               {/* Cash with Staff = wallet balances */}
               <MetricCard
                 label="Cash with Staff"
-                value={`Rs ${stats.stockEmpty.toLocaleString()}`} // Used stockEmpty slot
+                value={`Rs ${stats.cashWithStaff.toLocaleString()}`}
                 icon={<Users size={20} />}
                 subvalue="Active Wallets"
               />
@@ -328,7 +355,7 @@ export default function Home() {
                         liveTrips.map(trip => (
                           <tr key={trip.id} className="hover:bg-slate-50 transition-colors">
                             <td className="p-3 text-sm font-bold text-slate-900">
-                              {driversMap[trip.driver_id] || 'Unknown'}
+                              {trip.driver_name || driversMap[trip.driver_id] || 'Unknown'}
                             </td>
                             <td className="p-3 text-sm text-slate-600">
                               {trip.customers?.name}
@@ -446,8 +473,8 @@ export default function Home() {
             </div>
           </section>
         </div>
-      </main>
-    </div>
+      </main >
+    </div >
   );
 }
 

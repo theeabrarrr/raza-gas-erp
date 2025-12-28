@@ -3,86 +3,79 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Shield, ChevronRight, Lock, Mail, Loader2 } from 'lucide-react';
+import { Shield, ChevronRight, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function LoginPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const router = useRouter();
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+        setErrorMsg(null);
 
         try {
-            // STEP 1: Auth (Get Session)
-            console.log("Attempting SignIn...");
-            const { data: { user }, error } = await supabase.auth.signInWithPassword({
+            // 1. Authenticate with Supabase Auth
+            const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({
                 email,
                 password,
             });
 
-            if (error) {
-                console.error("SignIn Error:", error);
-                throw error;
+            if (authError) {
+                if (authError.message.includes('Invalid login credentials')) {
+                    throw new Error('Incorrect Email or Password.');
+                }
+                throw authError; // Throw original for other cases
             }
-            if (!user) throw new Error('No user found');
-            console.log("SignIn Success:", user.id);
 
-            // STEP 2: Get User Profile (Explicit Schema)
-            console.log("Fetching Profile...");
-            // @ts-ignore - Explicitly using schema.table string to bypass potential type ambiguity
+            if (!user) throw new Error('Authentication outcome unknown. Please try again.');
+
+            // 2. Fetch User Profile from Public Table
+            // Using 'maybeSingle' to handle missing profiles gracefully without throwing immediatley
             const { data: profile, error: profileError } = await supabase
-                .from('public.users')
-                .select('id, name, role, shift, is_online')
+                .from('users')
+                .select('*')
                 .eq('id', user.id)
-                .single();
+                .maybeSingle();
 
             if (profileError) {
-                console.warn("Profile fetch warning:", profileError);
-                // Don't crash, try to proceed if we have a user, or throw if critical
-                // But for Driver Login, we often need the role.
-            } else {
-                console.log("Profile Fetched:", profile);
+                console.error('Profile Fetch Error:', profileError);
+                throw new Error('System Error: Unable to retrieve user profile.');
             }
 
-            // STEP 3: Get Wallet (Explicit Schema)
-            console.log("Fetching Wallet...");
-            // @ts-ignore
-            const { data: wallet, error: walletError } = await supabase
-                .from('public.employee_wallets')
-                .select('balance, id')
-                .eq('user_id', user.id)
-                .single();
-
-            if (walletError && walletError.code !== 'PGRST116') { // Ignore "No Rows Found" (406 in some clients)
-                console.warn("Wallet fetch warning (non-critical):", walletError);
+            // 3. Verify Identity/Profile Exists
+            if (!profile) {
+                // This is the "Ghost User" scenario
+                // We can offer a specific message or actions here.
+                throw new Error('Account Setup Incomplete: Identity Missing. Please contact Admin.');
             }
 
-            if (walletError) console.warn("Wallet Error:", walletError);
-            else console.log("Wallet Fetched:", wallet);
+            // 4. Check Role Access
+            const role = profile.role;
+            if (!role) {
+                throw new Error('Access Denied: No role assigned to this account.');
+            }
 
-            const role = profile?.role || 'driver';
-            const userName = profile?.name || email.split('@')[0];
+            // Success
+            toast.success(`Welcome back, ${profile.name || 'User'}`);
 
-            toast.success(`Welcome, ${userName}!`);
-
-            // STEP 4: Routing
-            if (['admin', 'owner', 'manager', 'cashier'].includes(role)) {
-                router.push('/');
+            // Redirect based on role
+            if (role === 'admin') {
+                router.push('/admin');
             } else if (role === 'driver') {
                 router.push('/driver');
-            } else if (role === 'recovery') {
-                router.push('/recovery');
             } else {
                 router.push('/');
             }
 
         } catch (error: any) {
-            console.error(error);
-            toast.error(error.message || "Login failed");
+            console.error('Login Error:', error);
+            setErrorMsg(error.message || 'An unexpected error occurred.');
+            toast.error(error.message || 'Login failed');
         } finally {
             setLoading(false);
         }
@@ -106,6 +99,13 @@ export default function LoginPage() {
 
                 {/* Form */}
                 <div className="p-8">
+                    {errorMsg && (
+                        <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 text-red-600 animate-in fade-in slide-in-from-top-2">
+                            <AlertCircle size={20} className="shrink-0 mt-0.5" />
+                            <p className="text-sm font-semibold">{errorMsg}</p>
+                        </div>
+                    )}
+
                     <form onSubmit={handleLogin} className="space-y-6">
                         <div>
                             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Email Address</label>
@@ -116,7 +116,7 @@ export default function LoginPage() {
                                     required
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none transition-all placeholder:text-slate-300"
                                     placeholder="admin@razagas.com"
                                 />
                             </div>
@@ -131,7 +131,7 @@ export default function LoginPage() {
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none transition-all placeholder:text-slate-300"
                                     placeholder="••••••••"
                                 />
                             </div>
@@ -140,7 +140,7 @@ export default function LoginPage() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+                            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100"
                         >
                             {loading ? (
                                 <Loader2 size={20} className="animate-spin" />
@@ -154,7 +154,7 @@ export default function LoginPage() {
 
                     <div className="mt-6 text-center">
                         <p className="text-xs text-slate-400">
-                            Protected specific access only. <br /> Contact Master Admin for credentials.
+                            System Access is restricted. <br /> Contact Administrator for support.
                         </p>
                     </div>
                 </div>
