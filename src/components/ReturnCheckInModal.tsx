@@ -54,7 +54,7 @@ export default function ReturnCheckInModal({
             if (error) throw error;
 
             toast.success(
-                `Success! ${data.cylinders_returned} cylinders moved to Godown.`,
+                `Success! ${data.cylinders_returned} cylinders moved to Warehouse.`,
             );
             // Refresh list
             fetchTripMetrics();
@@ -164,7 +164,7 @@ export default function ReturnCheckInModal({
 
                 {/* Footer */}
                 <div className="bg-gray-50 p-4 text-center text-xs text-gray-400 border-t border-gray-100">
-                    Confirming moves cylinders to Godown as 'Empty'
+                    Confirming moves cylinders to Warehouse as 'Empty'
                 </div>
             </div>
         </div>

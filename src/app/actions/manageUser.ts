@@ -29,10 +29,10 @@ export async function updateUser(prevState: any, formData: FormData) {
         // 1. Update Auth Metadata
         const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(id, {
             user_metadata: {
-                full_name: name,
+                name: name,
                 role: role,
                 shift: shift,
-                phone: phone
+                phone_number: phone
             }
         });
         if (authError) throw authError;
@@ -42,10 +42,10 @@ export async function updateUser(prevState: any, formData: FormData) {
         const { error: dbError } = await supabaseAdmin
             .from('users')
             .update({
-                full_name: name,
+                name: name,
                 role: role,
                 shift: shift, // Now explicitly updating shift
-                phone: phone
+                phone_number: phone
             })
             .eq('id', id);
 

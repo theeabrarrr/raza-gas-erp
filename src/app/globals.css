@@ -1,53 +1,78 @@
 @import "tailwindcss";
 
 :root {
+  /* BACKGROUNDS */
   --background: #ffffff;
-  --foreground: #171717;
+  /* White  */
+  --foreground: #020617;
+  /* Slate 950 */
+
+  /* BRANDING (Emerald 600) - HARDCODED FOR VISIBILITY */
+  --primary: #059669;
+  --primary-foreground: #ffffff;
+
+  /* SECONDARY (Slate 100) */
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
+
+  /* DESTRUCTIVE (Red 600) */
+  --destructive: #dc2626;
+  --destructive-foreground: #fef2f2;
+
+  /* MUTED / ACCENTS */
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --accent: #f1f5f9;
+  --accent-foreground: #0f172a;
+
+  /* BORDERS */
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #059669;
+  /* Match Primary */
+
+  /* RADIUS */
+  --radius: 0.5rem;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* BASE STYLES */
+@layer base {
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-/* Global Design Tokens */
-@layer components {
-  .btn-primary {
-    @apply bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-6 py-2.5 rounded-lg shadow-sm transition-all active:scale-95 disabled:opacity-50 disabled:grayscale;
-  }
-
-  .btn-secondary {
-    @apply bg-slate-100 text-slate-900 hover:bg-slate-200 font-semibold px-6 py-2.5 rounded-lg transition-all active:scale-95;
-  }
-
-  .card {
-    @apply bg-white rounded-xl shadow-sm border border-slate-100 p-6;
-  }
-
-  .input-field {
-    @apply w-full p-3 rounded-lg border border-slate-200 bg-white placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 outline-none transition-all text-slate-900;
-  }
-
-  .text-label {
-    @apply text-xs font-bold text-slate-500 uppercase mb-1 block;
-  }
-
-  .text-body {
-    @apply text-slate-900;
+/* UTILITIES */
+@layer utilities {
+  .container {
+    @apply mx-auto px-4 max-w-7xl;
   }
 }

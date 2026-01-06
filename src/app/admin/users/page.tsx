@@ -3,22 +3,25 @@
 import { useRouter } from 'next/navigation';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+// import { supabase } from '@/lib/supabase'; // Removed to prevent accidental unsecured usage
+
 import { createEmployee } from '@/app/actions/createEmployee';
 import { updateUser, resetPassword, toggleUserStatus } from '@/app/actions/manageUser';
+import { getTenantUsers } from '@/app/actions/adminActions';
 import {
     Users, UserPlus, Search, Phone, Shield, Loader2, X, AlertCircle,
     Crown, Briefcase, Truck, MoreVertical, Edit, Lock, Ban, User, MailIcon, CheckCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase'; // Import Supabase Client
 
 // --- Types ---
 interface Employee {
     id: string;
-    name?: string;       // Fallback
-    full_name?: string;  // Primary
+    name?: string;       // Primary
     role: string;
     phone?: string;
+    phone_number?: string;
     email?: string;
     shift?: string;
     created_at: string;
@@ -31,6 +34,7 @@ export default function UsersPage() {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const [currentUserId, setCurrentUserId] = useState<string>('');
 
     // Modals State
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -74,38 +78,32 @@ export default function UsersPage() {
 
     async function fetchEmployees() {
         setLoading(true);
-        // Fetch users via Supabase Auth (Admin level) is not directly possible from client easily without Edge Functions
-        // But we have public.users (profiles) or we can use the `users` table if RLS allows.
-        // Given previous context, we use 'profiles' view or 'users' table.
-        // And we want 'banned_until' which is usually in auth.users.
-        // If we can't see auth status, we might assume active unless we rely on a public flag.
-        // For now, we stick to existing fetch logic but try to pull everything available.
+        try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) setCurrentUserId(user.id);
 
-        let rawData: any[] = [];
-        let { data: profiles, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+            const rawData = await getTenantUsers();
 
-        if (error || !profiles) {
-            const { data: users, error: usersError } = await supabase.from('users').select('*').order('created_at', { ascending: false });
-            if (!usersError && users) {
-                rawData = users;
-            }
-        } else {
-            rawData = profiles;
+            // Just use the raw data directly, or map if necessary
+            // Filtering logic remains the same below
+            setEmployees(rawData);
+
+            // Stats
+            const total = rawData.length;
+            const activeShift = rawData.filter((e: any) => { // Type assertion for safety
+                const s = (e.shift || e.raw_user_meta_data?.shift || '').toLowerCase();
+                return s === 'day' || s === 'night';
+            }).length;
+            const admins = rawData.filter((e: any) => ['admin', 'owner'].includes(e.role)).length;
+
+            setStats({ total, activeShift, admins });
+        } catch (err) {
+            toast.error("Failed to load staff.");
+        } finally {
+            setLoading(false);
         }
-
-        setEmployees(rawData);
-
-        // Stats
-        const total = rawData.length;
-        const activeShift = rawData.filter(e => {
-            const s = (e.shift || e.raw_user_meta_data?.shift || '').toLowerCase();
-            return s === 'day' || s === 'night';
-        }).length;
-        const admins = rawData.filter(e => ['admin', 'owner'].includes(e.role)).length;
-
-        setStats({ total, activeShift, admins });
-        setLoading(false);
     }
+
 
     // --- Actions ---
 
@@ -200,8 +198,8 @@ export default function UsersPage() {
     const openEdit = (emp: Employee) => {
         setEditingUser(emp);
         setEditForm({
-            name: emp.full_name || emp.name || '',
-            phone: emp.phone || '',
+            name: emp.name || '',
+            phone: emp.phone_number || emp.phone || '',
             role: emp.role || 'driver',
             shift: emp.shift || emp.raw_user_meta_data?.shift || 'Day'
         });
@@ -231,9 +229,9 @@ export default function UsersPage() {
 
     const filteredEmployees = employees.filter(e => {
         const term = search.toLowerCase();
-        return (e.full_name || e.name || '').toLowerCase().includes(term) ||
+        return (e.name || '').toLowerCase().includes(term) ||
             (e.email || '').toLowerCase().includes(term) ||
-            (e.phone || '').includes(term);
+            (e.phone_number || e.phone || '').includes(term);
     });
 
     return (
@@ -299,7 +297,7 @@ export default function UsersPage() {
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
                                     {filteredEmployees.map((emp) => {
-                                        const displayName = emp.full_name || emp.name || 'Unknown User';
+                                        const displayName = emp.name || 'Unknown User';
                                         const shiftData = emp.shift || (emp.raw_user_meta_data?.shift);
                                         const shiftBadge = getShiftBadge(shiftData);
                                         const badge = getRoleBadge(emp.role);
@@ -330,7 +328,7 @@ export default function UsersPage() {
                                                 <td className="p-5">
                                                     <div className="flex items-center gap-2 text-slate-600 font-mono font-medium text-sm">
                                                         <Phone size={14} className="text-slate-300" />
-                                                        {emp.phone || 'No Phone'}
+                                                        {emp.phone_number || emp.phone || 'No Phone'}
                                                     </div>
                                                 </td>
                                                 <td className="p-5 text-right">
@@ -401,7 +399,7 @@ export default function UsersPage() {
                         <Input label="Full Name" value={editForm.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditForm({ ...editForm, name: e.target.value })} required />
                         <Input label="Phone" value={editForm.phone} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditForm({ ...editForm, phone: e.target.value })} icon={<Phone size={16} />} />
                         <div className="grid grid-cols-2 gap-4">
-                            <Select label="Role" value={editForm.role} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEditForm({ ...editForm, role: e.target.value })}>
+                            <Select label="Role" value={editForm.role} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEditForm({ ...editForm, role: e.target.value })} disabled={editingUser.id === currentUserId}>
                                 <option value="driver">Driver</option>
                                 <option value="salesman">Salesman</option>
                                 <option value="cashier">Cashier</option>
@@ -426,7 +424,7 @@ export default function UsersPage() {
                 <Modal title="Reset Password" icon={<Lock size={20} className="text-orange-600" />} onClose={() => setResettingUser(null)}>
                     <form onSubmit={handleResetPassword} className="space-y-4">
                         <div className="p-3 bg-orange-50 text-orange-800 text-sm rounded-lg mb-4">
-                            Resetting password for <strong>{resettingUser.full_name || resettingUser.name}</strong>.
+                            Resetting password for <strong>{resettingUser.name}</strong>.
                         </div>
                         <Input label="New Password" placeholder="Enter new password" value={newPassword} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewPassword(e.target.value)} required />
                         <div className="pt-4">
@@ -443,7 +441,7 @@ export default function UsersPage() {
                         <div className="p-4 bg-red-50 text-red-900 rounded-xl border border-red-100">
                             <p className="font-bold text-lg mb-1">Are you sure?</p>
                             <p className="text-sm">
-                                This will immediately block access for <strong>{deactivatingUser.full_name || deactivatingUser.name}</strong>.
+                                This will immediately block access for <strong>{deactivatingUser.name}</strong>.
                                 They will be logged out properly.
                             </p>
                         </div>

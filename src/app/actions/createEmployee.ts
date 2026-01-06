@@ -1,9 +1,10 @@
 'use server';
 
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from '@/utils/supabase/server';
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
-// Note: We use the supabase-js client directly for Admin actions ensuring we bypass RLS with the Service Role Key
-const supabaseAdmin = createClient(
+// Admin client for bypassing RLS during user creation
+const supabaseAdmin = createSupabaseClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
@@ -17,7 +18,7 @@ const supabaseAdmin = createClient(
 export async function createEmployee(prevState: any, formData: FormData) {
     const name = formData.get('name') as string;
     const email = formData.get('email') as string;
-    const phone = formData.get('phone') as string; // Optional now
+    const phone = formData.get('phone') as string;
     const password = formData.get('password') as string;
     const role = formData.get('role') as string;
     const shift = formData.get('shift') as string;
@@ -27,19 +28,42 @@ export async function createEmployee(prevState: any, formData: FormData) {
     }
 
     try {
-        // 1. Create User in Supabase Auth
-        // The Database Trigger 'on_auth_user_created' will handle:
-        // - Inserting into 'users' table
-        // - Creating 'employee_wallets' entry
+        // 1. Get current Authenticated Admin
+        const supabase = await createClient();
+        const { data: { user: adminAuth }, error: adminAuthError } = await supabase.auth.getUser();
+
+        if (adminAuthError || !adminAuth) {
+            return { error: 'Unauthorized: You must be logged in to create employees.' };
+        }
+
+        // 2. Get Admin's Tenant ID from public.users
+        // Note: We use supabaseAdmin here or the authenticated client? 
+        // The authenticated client honors RLS. The admin should only see their own tenant, so this works.
+        // But to be safe and explicit, let's query the user's record.
+        const { data: adminUser, error: adminDbError } = await supabase
+            .from('users')
+            .select('tenant_id')
+            .eq('id', adminAuth.id)
+            .single();
+
+        if (adminDbError || !adminUser || !adminUser.tenant_id) {
+            console.error('Tenant Context Missing:', adminDbError);
+            return { error: 'Critical Security Error: Tenant Context Missing. Cannot proceed.' };
+        }
+
+        const adminTenantId = adminUser.tenant_id;
+
+        // 3. Create User in Supabase Auth with Tenant ID
         const { data: authUser, error: authError } = await supabaseAdmin.auth.admin.createUser({
             email,
             password,
             email_confirm: true,
             user_metadata: {
-                full_name: name,
+                name: name,
                 role: role,
                 shift: shift,
-                phone: phone || '' // Store phone if provided, else empty
+                phone_number: phone || '',
+                tenant_id: adminTenantId // <--- CRITICAL
             },
         });
 

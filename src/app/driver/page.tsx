@@ -1,1193 +1,661 @@
-"use client";
+'use client';
 
-import {
-  Truck,
-  Wallet,
-  X,
-  UploadCloud,
-  MapPin,
-  CheckCircle,
-  Smartphone,
-  Users,
-  Clock,
-  AlertTriangle,
-  Power,
-  LogOut
-} from "lucide-react";
-import { isShiftTime, canBypassShift } from "@/lib/shifts";
-import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
-import { toast } from "sonner";
+import { useState, useEffect } from 'react';
+import { Truck, MapPin, DollarSign, Camera, Check, Navigation, X, Share2, Phone, AlertCircle, RefreshCw, User as UserIcon, Package } from 'lucide-react';
+import LogoutBtn from '@/components/LogoutBtn';
+import { toast } from 'sonner';
+import { getDriverOrders, startTrip, completeDelivery, getCompletedOrders, getDriverInventory, getDriverStats, getDriverAllAssets, processHandover, getReceivers } from '@/app/actions/driverActions';
+import { getCustomerAssets } from '@/app/actions/customerActions';
+import { format } from 'date-fns';
+import { supabase } from '@/lib/supabase';
 
-// Mock Location ID needed for Stock Deduction
-let DEFAULT_LOCATION_ID = "";
+type View = 'route' | 'history';
 
-export default function DriverPage() {
-  const [drivers, setDrivers] = useState<any[]>([]);
-  const [selectedDriverId, setSelectedDriverId] = useState<string>("");
-  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(
-    new Set(),
-  );
-
-  const [currentTrip, setCurrentTrip] = useState<any>(null);
-  const [deliveries, setDeliveries] = useState<any[]>([]);
+export default function DriverApp() {
+  const [view, setView] = useState<View>('route');
+  const [orders, setOrders] = useState<any[]>([]);
+  const [completed, setCompleted] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [driverName, setDriverName] = useState('Driver');
+  const [stockCount, setStockCount] = useState(0);
 
-  // Modal States
-  const [showExpenseModal, setShowExpenseModal] = useState(false);
-  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState<any>(null);
-  const [deliveryStep, setDeliveryStep] = useState<"payment" | "success">(
-    "payment",
-  );
-  const [deliveryProof, setDeliveryProof] = useState<File | null>(null);
-  const [isSubmittingDelivery, setIsSubmittingDelivery] = useState(false);
-  const [deliverySummary, setDeliverySummary] = useState({
-    delivered: 0,
-    collected: 0,
-  });
-  const [receivedAmount, setReceivedAmount] = useState("");
+  // HUD Stats
+  const [stats, setStats] = useState({ cashLiability: 0, emptiesOnHand: 0 });
 
-  // Wallet State
-  const [walletBalance, setWalletBalance] = useState(0);
+  // Trip State
+  const isTripStarted = orders.some(o => o.status === 'on_trip');
 
-  // Expense Form State
-  const [expenseAmount, setExpenseAmount] = useState("");
-  const [expenseCategory, setExpenseCategory] = useState("fuel");
-  const [expenseDesc, setExpenseDesc] = useState("");
-  const [expenseFile, setExpenseFile] = useState<File | null>(null);
-  const [submittingExpense, setSubmittingExpense] = useState(false);
+  // Modal State
+  const [activeOrder, setActiveOrder] = useState<any>(null); // For Delivery Modal
+  const [showHandover, setShowHandover] = useState(false); // For Handover Modal
+
+  const [submitting, setSubmitting] = useState(false);
 
   // Delivery Form State
-  const [cylinderSerials, setCylinderSerials] = useState("");
+  const [receivedAmount, setReceivedAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [returnsCount, setReturnsCount] = useState('0'); // Fallback
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [customerAssets, setCustomerAssets] = useState<any[]>([]);
+  const [selectedReturns, setSelectedReturns] = useState<string[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(false);
 
-  // Handover Form State (New)
-  const [showHandoverModal, setShowHandoverModal] = useState(false);
-  const [handoverAmount, setHandoverAmount] = useState("");
-  const [handoverReceiver, setHandoverReceiver] = useState("");
-  const [cashiers, setCashiers] = useState<any[]>([]);
-  const [handingOver, setHandingOver] = useState(false);
-
-  // Shift State
-  const [isOnline, setIsOnline] = useState(false);
-  const [userProfile, setUserProfile] = useState<any>(null);
-
-  // Force Timer Update
-  const [now, setNow] = useState(new Date());
-
-  // Logout Logic
-  const handleLogout = async () => {
-    toast.promise(supabase.auth.signOut(), {
-      loading: 'Logging out...',
-      success: () => {
-        window.location.href = '/login';
-        return 'Logged out successfully';
-      },
-      error: 'Error logging out',
-    });
-  };
+  // Handover Form State
+  const [depositAmount, setDepositAmount] = useState('');
+  const [driverAssets, setDriverAssets] = useState<any[]>([]);
+  const [selectedHandoverAssets, setSelectedHandoverAssets] = useState<string[]>([]);
+  const [receivers, setReceivers] = useState<any[]>([]);
+  const [selectedReceiver, setSelectedReceiver] = useState('');
 
   useEffect(() => {
-    fetchDrivers();
-    fetchDefaultLocation();
-    fetchCashiers();
-
-    // Timer Interval
-    const interval = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(interval);
+    loadData();
   }, []);
 
-  useEffect(() => {
-    if (selectedDriverId) {
-      fetchDeliveries();
-      checkActiveTrip();
-      fetchWallet(); // NEW: Fetch Wallet
-      setSelectedOrderIds(new Set()); // Reset selection
-
-      // Realtime Subscription for Driver
-      const channel = supabase
-        .channel(`driver-orders-${selectedDriverId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "orders",
-            filter: `driver_id=eq.${selectedDriverId}`, // Only listen for THIS driver
-          },
-          (payload) => {
-            console.log("Realtime Update:", payload);
-            fetchDeliveries();
-            checkActiveTrip(); // Re-check trip status too
-          },
-        )
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-  }, [selectedDriverId]);
-
-  async function fetchCashiers() {
-    // Same logic as Recovery Page
-    const { data } = await supabase
-      .from("users")
-      .select("id, name, role")
-      .in("role", ["admin", "shop_manager", "cashier"]);
-    setCashiers(data || []);
-  }
-
-  async function fetchDrivers() {
-    // 1. Get ALL drivers for selection (Admin/Debug view)
-    const { data } = await supabase
-      .from("users")
-      .select("id, name, role, shift, is_online")
-      .ilike("role", "%driver%");
-    if (data && data.length > 0) {
-      setDrivers(data);
-      // Default to first driver IF not already selected
-      if (!selectedDriverId) setSelectedDriverId(data[0].id);
-
-      // 2. Hydrate Profile for Selected Driver
-      const current = data.find(d => d.id === (selectedDriverId || data[0].id));
-      if (current) {
-        setUserProfile(current);
-        setIsOnline(current.is_online || false);
-      }
-    }
-  }
-
-  // Effect to update profile when selection changes
-  useEffect(() => {
-    if (selectedDriverId && drivers.length > 0) {
-      const current = drivers.find(d => d.id === selectedDriverId);
-      if (current) {
-        setUserProfile(current);
-        setIsOnline(current.is_online || false);
-      }
-    }
-  }, [selectedDriverId, drivers]);
-
-  async function fetchDefaultLocation() {
-    const { data } = await supabase
-      .from("locations")
-      .select("id")
-      .limit(1)
-      .single();
-    if (data) DEFAULT_LOCATION_ID = data.id;
-  }
-
-  async function checkActiveTrip() {
-    if (!selectedDriverId) return;
-    try {
-      const { data } = await supabase
-        .from("trips")
-        .select("*")
-        .eq("driver_id", selectedDriverId)
-        .eq("status", "ongoing")
-        .single();
-
-      if (data) setCurrentTrip(data);
-      else setCurrentTrip(null);
-    } catch (error) {
-      setCurrentTrip(null);
-    }
-  }
-
-  async function fetchDeliveries() {
-    if (!selectedDriverId) return;
+  const loadData = async () => {
     setLoading(true);
-    console.log("Fetching orders for Driver ID:", selectedDriverId);
-    try {
-      const { data, error } = await supabase
-        .from("orders")
-        .select(
-          "*, customers(name, address, phone), order_items(product_name, quantity)",
-        )
-        .eq("driver_id", selectedDriverId)
-        .in("status", [
-          "pending",
-          "assigned",
-          "dispatched",
-          "delivering",
-          "on-the-road",
-          "on_trip",
-        ]);
-
-      console.log("Supabase Order Response:", { data, error });
-
-      if (error) throw error;
-      setDeliveries(data || []);
-
-      if (data) {
-        const ongoing = data.filter(
-          (o) => o.status === "on-the-road" || o.status === "delivering",
-        );
-        if (ongoing.length > 0) {
-          // Optionally lock selection? For now just reflect reality
-        }
-      }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function fetchWallet() {
-    if (!selectedDriverId) return;
-    const { data } = await supabase
-      .from("employee_wallets")
-      .select("balance")
-      .eq("user_id", selectedDriverId)
-      .single();
-    if (data) {
-      setWalletBalance(data.balance);
-    } else {
-      // If no wallet exists, create one with 0 (Lazy Init)
-      await supabase
-        .from("employee_wallets")
-        .insert([{ user_id: selectedDriverId, balance: 0 }]);
-      setWalletBalance(0);
-    }
-  }
-
-  const toggleShift = async () => {
-    if (!userProfile) return;
-
-    // 1. Check Shift Time Rules (if turning ON)
-    if (!isOnline) {
-      const allowed = isShiftTime(userProfile.shift) || canBypassShift(userProfile.role);
-
-      if (!allowed) {
-        toast.error(`Outside Shift Hours! Your shift is: ${userProfile.shift}`);
-        return;
-      }
+    // Fetch Driver Name
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.user_metadata?.name) {
+      setDriverName(user.user_metadata.name);
     }
 
-    // 2. Toggle Status in DB
-    const newStatus = !isOnline;
-    const { error } = await supabase
-      .from('users')
-      .update({ is_online: newStatus })
-      .eq('id', selectedDriverId);
+    const [pending, done, inventory, hudStats] = await Promise.all([
+      getDriverOrders(),
+      getCompletedOrders(),
+      getDriverInventory(),
+      getDriverStats()
+    ]);
 
-    if (error) {
-      toast.error('Failed to update status');
-    } else {
-      setIsOnline(newStatus);
-      // Update local cache
-      const updatedDrivers = drivers.map(d => d.id === selectedDriverId ? { ...d, is_online: newStatus } : d);
-      setDrivers(updatedDrivers);
-      toast.success(newStatus ? "Shift Started 🟢" : "Shift Ended 🔴");
-    }
+    setOrders(pending);
+    setCompleted(done);
+    setStockCount(inventory.count);
+    setStats(hudStats);
+    setLoading(false);
   };
 
-  const toggleOrderSelection = (orderId: string) => {
-    // Only allow selection if ONLINE or Role Bypass
-    if (!isOnline && !canBypassShift(userProfile?.role)) {
-      toast.error("Please START SHIFT to process orders.");
+  const openHandoverModal = async () => {
+    setShowHandover(true);
+    setDepositAmount(stats.cashLiability.toString()); // Default to max
+    setSelectedHandoverAssets([]);
+    setLoadingAssets(true);
+    const [assets, recs] = await Promise.all([
+      getDriverAllAssets(),
+      getReceivers()
+    ]);
+    setDriverAssets(assets);
+    setReceivers(recs);
+    if (recs.length > 0) setSelectedReceiver(recs[0].id); // Default to first
+    setLoadingAssets(false);
+  };
+
+  const toggleHandoverAsset = (serial: string) => {
+    setSelectedHandoverAssets(prev =>
+      prev.includes(serial) ? prev.filter(s => s !== serial) : [...prev, serial]
+    );
+  };
+
+  const handleHandoverSubmit = async () => {
+    if (!selectedReceiver) {
+      toast.error("Please select a receiver");
       return;
     }
 
-    const newSet = new Set(selectedOrderIds);
-    if (newSet.has(orderId)) {
-      newSet.delete(orderId);
-    } else {
-      newSet.add(orderId);
-    }
-    setSelectedOrderIds(newSet);
-  };
-
-  const handleTripAction = async () => {
-    if (!selectedDriverId) return;
-
-    if (currentTrip) {
-      // END TRIP
-      const { error } = await supabase
-        .from("trips")
-        .update({ status: "completed", end_time: new Date().toISOString() })
-        .eq("id", currentTrip.id);
-
-      if (error) {
-        toast.error("Failed to end trip");
-        return;
-      }
-
-      // Reset Driver Status
-      await supabase
-        .from("users")
-        .update({ status: "idle" })
-        .eq("id", selectedDriverId);
-
-      setCurrentTrip(null);
-      toast.success("Trip Ended Successfully");
-
-      // FIX: Clear Selection and Refetch to prevent stale state
-      setSelectedOrderIds(new Set());
-      fetchDeliveries();
-    } else {
-      // START TRIP - requires selection
-      if (selectedOrderIds.size === 0) {
-        toast.error("Select at least one order to start trip!");
-        return;
-      }
-
-      // DEFENSIVE CHECK: Prevent starting trip with already delivered orders
-      const selectedOrdersList = deliveries.filter((d) =>
-        selectedOrderIds.has(d.id),
-      );
-      if (selectedOrdersList.some((o) => o.status === "delivered")) {
-        toast.error(
-          "Error: Cannot start trip. One or more orders are already delivered.",
-        );
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("trips")
-        .insert([
-          {
-            driver_id: selectedDriverId,
-            start_time: new Date().toISOString(),
-            status: "ongoing",
-          },
-        ])
-        .select()
-        .single();
-
-      if (error) {
-        toast.error("Failed to start trip");
-        return;
-      }
-      setCurrentTrip(data);
-
-      // Set Driver Status to Busy
-      await supabase
-        .from("users")
-        .update({ status: "busy" })
-        .eq("id", selectedDriverId);
-
-      // Update ONLY SELECTED Orders to On-The-Road
-      const selectedOrders = Array.from(selectedOrderIds);
-
-      // Line 184 Fix: Rename to tripData and tripError to avoid conflict
-      const { data: tripData, error: tripError } = await supabase
-        .from("orders")
-        .update({
-          status: "on_trip", // STRICT: Database Constraint
-          trip_started_at: new Date().toISOString(),
-        })
-        .in("id", selectedOrders)
-        .select();
-
-      if (tripError) {
-        toast.error(`DB ERROR: ${tripError.message}`);
-        return;
-      }
-      if (!tripData || tripData.length === 0) {
-        toast.warning("No rows updated. Check if IDs are correct.");
-      } else {
-        toast.success("Trip Started Successfully!");
-        fetchDeliveries();
-      }
-    }
-  };
-
-  const handleSaveExpense = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedDriverId) return;
-
-    if (!expenseFile) {
-      toast.error("Receipt Photo is Mandatory!");
+    // Validation: Prevent Fake Money
+    const deposit = parseFloat(depositAmount);
+    if (deposit > stats.cashLiability) {
+      toast.error(`Insufficient Funds! You only have Rs ${stats.cashLiability}`);
       return;
     }
 
-    setSubmittingExpense(true);
+    setSubmitting(true);
+    const formData = new FormData();
+    formData.append('deposit_amount', depositAmount);
+    formData.append('returned_serials', JSON.stringify(selectedHandoverAssets));
+    formData.append('receiver_id', selectedReceiver);
 
-    try {
-      const fileExt = expenseFile.name.split(".").pop();
-      const fileName = `${selectedDriverId}_${Date.now()}.${fileExt}`;
-      const filePath = `${fileName}`;
+    const res = await processHandover(formData);
 
-      // Upload
-      const { error: uploadError } = await supabase.storage
-        .from("receipts")
-        .upload(filePath, expenseFile);
+    if (res?.error) {
+      toast.error(res.error);
+    } else {
+      toast.success("Request Sent for Approval!");
+      setShowHandover(false);
+      loadData();
+    }
+    setSubmitting(false);
+  };
 
-      if (uploadError) throw uploadError;
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("receipts").getPublicUrl(filePath);
+  // ... (handleStartTrip, openDeliveryModal etc. remain same)
 
-      // Save
-      const { error: dbError } = await supabase.from("expenses").insert([
-        {
-          user_id: selectedDriverId,
-          amount: parseFloat(expenseAmount),
-          category: expenseCategory,
-          description: expenseDesc,
-          proof_url: publicUrl,
-          approved: false,
-        },
-      ]);
-
-      if (dbError) throw dbError;
-
-      toast.success("Expense Saved Successfully");
-      setShowExpenseModal(false);
-      setExpenseAmount("");
-      setExpenseDesc("");
-      setExpenseCategory("fuel");
-      setExpenseFile(null);
-    } catch (error: any) {
-      toast.error(`Failed: ${error.message}`);
-    } finally {
-      setSubmittingExpense(false);
+  const handleStartTrip = async () => {
+    const ids = orders.map(o => o.id);
+    const res = await startTrip(ids);
+    if (res?.error) toast.error(res.error);
+    else {
+      toast.success("Trip Started! Drive Safe 🚚");
+      loadData();
     }
   };
 
-  const openDeliveryModal = (order: any) => {
-    setSelectedOrder(order);
-    setDeliveryStep("payment");
-    setCylinderSerials(""); // Reset input
-    setDeliveryProof(null);
-    setReceivedAmount(order.total_amount?.toString() || ""); // Auto-fill with total
-    setShowDeliveryModal(true);
+  const openDeliveryModal = async (order: any) => {
+    setActiveOrder(order);
+    setReceivedAmount(order.total_amount.toString()); // Default to full
+    setPaymentMethod('cash');
+    setReturnsCount('0');
+    setProofFile(null);
+    setSelectedReturns([]);
+    setCustomerAssets([]);
+
+    // Fetch Assets for Swap
+    if (order.customer_id) {
+      setLoadingAssets(true);
+      const assets = await getCustomerAssets(order.customer_id);
+      setCustomerAssets(assets);
+      setLoadingAssets(false);
+    }
+  };
+
+  const toggleReturnAsset = (serial: string) => {
+    setSelectedReturns(prev =>
+      prev.includes(serial) ? prev.filter(s => s !== serial) : [...prev, serial]
+    );
   };
 
   const handleDeliverySubmit = async () => {
-    // No method arg
-    // Determine Location ID (Order specific or Default)
-    const locationId = selectedOrder?.location_id || DEFAULT_LOCATION_ID;
+    if (!activeOrder) return;
 
-    if (!selectedOrder || !locationId || !selectedDriverId) {
-      toast.error("System Error: No Location or Driver Found (Check Console)");
-      console.error("Missing Data:", {
-        order: selectedOrder?.id,
-        driver: selectedDriverId,
-        loc: locationId,
-      });
+    // Validation
+    const amt = parseFloat(receivedAmount);
+    if (isNaN(amt) || amt < 0) {
+      toast.error("Invalid Amount");
       return;
     }
 
-    // Logic for Partial Payment
-    const received = parseFloat(receivedAmount);
-    if (isNaN(received) || received < 0) {
-      toast.error("Please enter a valid amount received.");
+    if (paymentMethod === 'cash' && amt > 0 && !proofFile) {
+      toast.error("Please upload a photo of the cash/receipt!");
       return;
     }
 
-    // Determine Method: 'Cash' ONLY if fully paid. Else 'Credit'.
-    // If received == 0 -> 'Credit' (Full Credit)
-    // If received < total -> 'Credit' (Partial Credit)
-    // If received >= total -> 'Cash' (Full Payment)
-    const total = selectedOrder.total_amount || 0;
-    const method = received >= total ? "cash" : "credit";
-    const balance = Math.max(0, total - received);
+    setSubmitting(true);
+    const formData = new FormData();
+    formData.append('order_id', activeOrder.id);
+    formData.append('received_amount', amt.toString());
+    formData.append('payment_method', paymentMethod);
+    formData.append('returned_empty_count', returnsCount); // Fallback
+    formData.append('returned_serials', JSON.stringify(selectedReturns)); // Specifics
+    if (proofFile) formData.append('proof_file', proofFile);
 
-    // If fully unpaid (0 received), proof might not be needed?
-    // BUT User said: "Transaction (Cash Log): amount = amount_received".
-    // If amount is > 0, we likely want proof (cash collected).
-    if (received > 0 && !deliveryProof) {
-      toast.error(
-        "Please upload a proof of payment/delivery (photo) for cash collected!",
-      );
-      return;
+    const res = await completeDelivery(formData);
+
+    if (res?.error) {
+      toast.error(res.error);
+    } else {
+      toast.success("Delivery Completed!");
+      setActiveOrder(null);
+      loadData();
     }
+    setSubmitting(false);
+  };
 
-    setIsSubmittingDelivery(true);
-    const toastId = toast.loading("Processing Delivery...");
-
-    try {
-      let proofUrl = null;
-
-      // 1. Upload Proof if exists
-      if (deliveryProof) {
-        const fileExt = deliveryProof.name.split(".").pop();
-        const fileName = `proof_${selectedOrder.id}_${Date.now()}.${fileExt}`;
-        const { error: uploadError } = await supabase.storage
-          .from("receipts")
-          .upload(fileName, deliveryProof);
-
-        if (uploadError) throw uploadError;
-
-        const {
-          data: { publicUrl },
-        } = supabase.storage.from("receipts").getPublicUrl(fileName);
-
-        proofUrl = publicUrl;
-      }
-
-      // 2. Update Order Status
-      const { error: orderError } = await supabase
-        .from("orders")
-        .update({
-          status: "completed",
-          payment_method: method,
-          amount_received: received, // NEW COLUMN
-          trip_completed_at: new Date().toISOString(),
-          notes: cylinderSerials, // Save Serial Numbers
-        })
-        .eq("id", selectedOrder.id);
-
-      if (orderError) throw orderError;
-
-      // 3. Handle Payment Logic (Transaction + Wallet + Debt)
-      console.log(
-        "Payment Logic Triggered. Received:",
-        received,
-        "Method:",
-        method,
-      );
-
-      // A) Cash Collected -> Transaction + Driver Wallet
-      if (received > 0) {
-        // Log Transaction
-        const { error: txnError } = await supabase.from("transactions").insert([
-          {
-            order_id: selectedOrder.id,
-            location_id: locationId,
-            customer_id: selectedOrder.customer_id,
-            user_id: selectedDriverId, // Driver
-            amount: received, // CASH COLLECTED
-            type: "sale",
-            payment_method: "cash",
-            proof_url: proofUrl,
-          },
-        ]);
-        if (txnError) console.error("Transaction Insert Error:", txnError);
-
-        // Update Driver Wallet
-        console.log("Updating Wallet for Driver:", selectedDriverId);
-        const { data: walletData, error: fetchErr } = await supabase
-          .from("employee_wallets")
-          .select("balance")
-          .eq("user_id", selectedDriverId)
-          .single();
-        if (fetchErr) console.error("Wallet Fetch Error:", fetchErr);
-
-        const currentBal = walletData?.balance || 0;
-        const newWalletBal = currentBal + received;
-        console.log("Current Bal:", currentBal, "New Bal:", newWalletBal);
-
-        const { error: walletError } = await supabase
-          .from("employee_wallets")
-          .upsert({
-            user_id: selectedDriverId,
-            balance: newWalletBal,
-            updated_at: new Date().toISOString(),
-          });
-
-        if (walletError) {
-          console.error("Wallet Update Failed:", walletError);
-          toast.error("Warning: Wallet update failed.");
-        } else {
-          console.log("Wallet Updated Successfully");
-          fetchWallet(); // Update UI
-        }
-      }
-
-      // B) Remaining Balance -> Customer Debt
-      if (balance > 0) {
-        console.log("Updating Debt by:", balance);
-        const { data: cust } = await supabase
-          .from("customers")
-          .select("current_balance")
-          .eq("id", selectedOrder.customer_id)
-          .single();
-        const newDebt = (cust?.current_balance || 0) + balance;
-        await supabase
-          .from("customers")
-          .update({ current_balance: newDebt })
-          .eq("id", selectedOrder.customer_id);
-      }
-
-      // 4. Inventory Deduction (Legacy - can be kept or removed if we rely purely on serialized tracking)
-      for (const item of selectedOrder.order_items) {
-        // Decrement Full, Increment Empty (Logic kept for simple counts)
-        const { data: inv } = await supabase
-          .from("inventory")
-          .select("*")
-          .eq("location_id", locationId)
-          .limit(1)
-          .single();
-        if (inv) {
-          await supabase
-            .from("inventory")
-            .update({
-              count_full: inv.count_full - item.quantity,
-              count_empty: inv.count_empty + item.quantity,
-            })
-            .eq("id", inv.id);
-        }
-      }
-
-      // 5. SWAP LOGIC: Update Serialized Assets
-      // A) Full Cylinders: Move from Driver -> Customer
-      const { error: fullUpdateError } = await supabase
-        .from("cylinders")
-        .update({
-          current_location_type: "customer",
-          current_holder_id: selectedOrder.customer_id,
-          status: "full", // EXPLICITLY SET STATUS TO FULL
-          updated_at: new Date().toISOString(),
-        })
-        .eq("last_order_id", selectedOrder.id)
-        .eq("current_location_type", "driver"); // Only those currently with driver
-
-      if (fullUpdateError)
-        console.error("Full Update Failed:", fullUpdateError);
-
-      // B) Empty Returns: Move from Customer -> Driver
-      const returnedSerials = cylinderSerials
-        .split(",")
-        .map((s) => s.trim().toUpperCase())
-        .filter((s) => s);
-      let returnedCount = 0;
-
-      if (returnedSerials.length > 0) {
-        const { data: returnedData, error: emptyUpdateError } = await supabase
-          .from("cylinders")
-          .update({
-            status: "empty",
-            current_location_type: "driver",
-            current_holder_id: selectedDriverId,
-            last_order_id: selectedOrder.id, // Link for Trip Reconciliation
-            updated_at: new Date().toISOString(),
-          })
-          .in("serial_number", returnedSerials)
-          .select();
-
-        if (emptyUpdateError) {
-          toast.error(`Return Error: ${emptyUpdateError.message}`);
-        } else {
-          returnedCount = returnedData?.length || 0;
-        }
-      }
-
-      toast.dismiss(toastId);
-
-      // Check for remaining active orders in the CURRENT batch
-      const remainingOrdersCount = deliveries.filter(
-        (o) =>
-          o.id !== selectedOrder.id &&
-          o.driver_id === selectedDriverId &&
-          (o.status === "on_trip" ||
-            (o.status === "assigned" && o.trip_started_at)),
-      ).length;
-
-      if (remainingOrdersCount === 0 && currentTrip) {
-        // Auto-End Trip
-        const { error: tripError } = await supabase
-          .from("trips")
-          .update({ status: "completed", end_time: new Date().toISOString() })
-          .eq("id", currentTrip.id);
-
-        if (!tripError) {
-          // Reset Driver Status
-          await supabase
-            .from("users")
-            .update({ status: "idle" })
-            .eq("id", selectedDriverId);
-
-          setCurrentTrip(null);
-          toast.success("All deliveries completed. Trip Ended.");
-        } else {
-          toast.success("Delivery Completed (Trip End Failed)");
-        }
+  const handlePaymentMethodChange = (method: string) => {
+    setPaymentMethod(method);
+    if (activeOrder) {
+      if (method === 'credit') {
+        setReceivedAmount('0'); // Auto-zero for credit
       } else {
-        toast.success(
-          `delivered ${selectedOrder.order_items[0]?.quantity || 1} Full, Collected ${returnedCount} Empty!`,
-        );
+        setReceivedAmount(activeOrder.total_amount.toString()); // Auto-fill for cash
       }
-
-      setDeliverySummary({
-        delivered: selectedOrder.order_items[0]?.quantity || 1,
-        collected: returnedCount,
-      });
-      setDeliveryStep("success"); // Show WhatsApp screen
-      // Store returned count for display if needed, or rely on toast
-
-      // FIX: Clear Selection and Refetch
-      setSelectedOrderIds(new Set());
-      fetchDeliveries(); // Refresh list
-    } catch (error: any) {
-      toast.dismiss(toastId);
-      toast.error(`Error: ${error.message}`);
-      console.error(error);
-    } finally {
-      setIsSubmittingDelivery(false);
     }
   };
 
-  const handleHandoverSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const amount = parseFloat(handoverAmount);
-    if (isNaN(amount) || amount <= 0) {
-      toast.error("Invalid amount");
-      return;
-    }
-    if (!handoverReceiver) {
-      toast.error("Select a receiver");
-      return;
-    }
-
-    setHandingOver(true);
-    try {
-      // Fetch receiver name for log
-      const receiverName =
-        cashiers.find((c) => c.id === handoverReceiver)?.name || "Unknown";
-
-      // Insert into Handover Logs (Pending)
-      const { error: logError } = await supabase.from("handover_logs").insert([
-        {
-          sender_id: selectedDriverId,
-          receiver_id: handoverReceiver,
-          amount: amount,
-          status: "pending",
-        },
-      ]);
-
-      if (logError) throw logError;
-
-      // Deduct from Wallet (It's now "in transit" / pending verification, so removed from driver's active balance?)
-      // YES, User Request: "deducts from their current_balance (Transit state)"
-      const { data: walletData } = await supabase
-        .from("employee_wallets")
-        .select("balance")
-        .eq("user_id", selectedDriverId)
-        .single();
-      const currentBal = walletData?.balance || 0;
-      await supabase
-        .from("employee_wallets")
-        .upsert({
-          user_id: selectedDriverId,
-          balance: currentBal - amount,
-          updated_at: new Date().toISOString(),
-        });
-
-      // Activity Log
-      await supabase.from("activity_logs").insert([
-        {
-          user_id: selectedDriverId, // The driver handing over
-          action_text: `Handed over Rs ${amount.toLocaleString()} to ${receiverName}(Pending Verification)`,
-        },
-      ]);
-
-      toast.success(`Handover of Rs ${amount} recorded! Balance Updated.`);
-      fetchWallet(); // Update UI
-      setShowHandoverModal(false);
-      setHandoverAmount("");
-    } catch (error: any) {
-      toast.error(`Handover Failed: ${error.message}`);
-    } finally {
-      setHandingOver(false);
-    }
+  // Helper for Friendly ID
+  const getFriendlyId = (order: any) => {
+    if (order.friendly_id) return `#${order.friendly_id}`;
+    return `#${order.id.slice(0, 5).toUpperCase()}`;
   };
 
-  // Timer Helper
-  const getElapsedTime = (startTime: string) => {
-    const start = new Date(startTime).getTime();
-    const current = now.getTime();
-    const diff = Math.max(0, current - start);
-
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-    return `${hours.toString().padStart(2, "0")}: ${minutes.toString().padStart(2, "0")}: ${seconds.toString().padStart(2, "0")}`;
-  };
+  const handleSingleStart = async (id: string) => {
+    const res = await startTrip([id]);
+    if (res?.error) toast.error(res.error);
+    else {
+      toast.success("Trip Started for Order");
+      loadData();
+    }
+  }
 
   return (
-    <div className="p-4 bg-gray-50 min-h-screen pb-32 flex flex-col gap-6 font-sans">
-      {/* HEADER: Added for Logout */}
-      <div className="flex justify-between items-center bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-        <div className="flex items-center gap-3">
-          <div className="bg-emerald-100 p-2 rounded-xl text-emerald-600">
-            <Truck size={20} />
-          </div>
-          <div>
-            <h1 className="font-black text-gray-900 leading-none uppercase">Driver App</h1>
-            <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mt-0.5">Raza Gas ERP</p>
-          </div>
-        </div>
-        <button
-          onClick={handleLogout}
-          className="bg-red-50 text-red-600 p-2.5 rounded-xl border border-red-100 hover:bg-red-100 active:scale-95 transition-all"
-          title="Log Out"
-        >
-          <LogOut size={20} />
-        </button>
-      </div>
-
-      {/* DRIVER SELECTOR (HIDDEN FOR PRODUCTION, visible if debug needed) */}
-      {/* <div className="bg-slate-800 p-4 rounded-xl shadow-lg border border-slate-700 hidden"> ... </div> */}
-
-      {/* 1. Wallet Balance & Handover Card (Hero) */}
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden">
-        <div className="relative z-10">
-          <div className="flex justify-between items-start">
-            <p className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-2">
-              Cash in Hand
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={toggleShift}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg border flex items-center gap-1 transition-all ${isOnline
-                  ? "bg-emerald-100 text-emerald-700 border-emerald-200"
-                  : "bg-slate-100 text-slate-500 border-slate-200"
-                  }`}
-              >
-                <Power size={14} /> {isOnline ? 'ON DUTY' : 'OFF DUTY'}
-              </button>
-              <button
-                onClick={() => setShowExpenseModal(true)}
-                className="px-3 py-1.5 bg-gray-50 text-gray-600 text-xs font-bold rounded-lg border border-gray-200 flex items-center gap-1 hover:bg-gray-100 transition-colors"
-              >
-                <Wallet size={14} /> Expense
-              </button>
+    <div className="min-h-screen bg-slate-100 font-sans pb-24">
+      {/* Dark Premium Navbar */}
+      <header className="bg-slate-900 text-white shadow-lg sticky top-0 z-30">
+        <div className="flex justify-between items-center p-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border-2 border-slate-700">
+              <UserIcon size={20} className="text-emerald-400" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Driver</p>
+              <h1 className="text-sm font-black tracking-tight">{driverName}</h1>
             </div>
           </div>
-
-          <div className="text-4xl font-black text-gray-900 mb-6 mt-1">
-            Rs {(walletBalance || 0).toLocaleString()}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={openHandoverModal}
+              title="Deposit & Return"
+              className="p-2 bg-slate-800 text-emerald-400 border border-slate-700 rounded-full hover:bg-slate-700 hover:text-emerald-300 transition-colors"
+            >
+              <DollarSign size={20} />
+            </button>
+            <button
+              onClick={loadData}
+              className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white active:bg-slate-700 transition-colors"
+            >
+              <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
+            </button>
           </div>
+        </div>
 
-          <div className="border-t border-gray-100 my-4"></div>
+        {/* HUD STATS BAR */}
+        <div className="grid grid-cols-3 gap-px bg-slate-800 border-t border-slate-800">
+          <div className="bg-slate-900 p-2 text-center">
+            <p className="text-[10px] uppercase font-bold text-slate-500">Full</p>
+            <p className="text-lg font-black text-emerald-400">{stockCount}</p>
+          </div>
+          <div className="bg-slate-900 p-2 text-center">
+            <p className="text-[10px] uppercase font-bold text-slate-500">Empty</p>
+            <p className="text-lg font-black text-amber-500">{stats.emptiesOnHand}</p>
+          </div>
+          <div className="bg-slate-900 p-2 text-center">
+            <p className="text-[10px] uppercase font-bold text-slate-500">Cash</p>
+            <p className="text-lg font-black text-white">Rs {stats.cashLiability.toLocaleString()}</p>
+          </div>
+        </div>
 
+        {/* Tabs */}
+        <div className="flex px-4 pb-0 gap-6">
           <button
-            onClick={() => setShowHandoverModal(true)}
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-all shadow-md shadow-emerald-500/20"
+            onClick={() => setView('route')}
+            className={`pb-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all ${view === 'route' ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-slate-500'}`}
           >
-            <CheckCircle size={20} /> Request Handover
+            My Route ({orders.length})
+          </button>
+          <button
+            onClick={() => setView('history')}
+            className={`pb-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all ${view === 'history' ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-slate-500'}`}
+          >
+            History
           </button>
         </div>
-      </div>
+      </header>
+      <main className="p-4 max-w-md mx-auto relative z-10">
 
-      {/* 2. Trip Action Card (Replaces Footer) */}
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-        {(() => {
-          const hasActiveDeliveries = deliveries.some(
-            (d) => d.status === "on_trip" || d.status === "on-the-road",
-          );
-          const canEndTrip = currentTrip && !hasActiveDeliveries;
-
-          return currentTrip ? (
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-2 mb-4 bg-emerald-50 py-2 rounded-lg border border-emerald-100">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider">
-                  Trip Active • {getElapsedTime(currentTrip.start_time)}
-                </span>
-              </div>
-
-              <button
-                onClick={handleTripAction}
-                disabled={!canEndTrip}
-                className={`w-full py-4 rounded-xl font-bold text-lg uppercase tracking-wide shadow-lg transition-all active:scale-95 ${canEndTrip
-                  ? "bg-red-50 text-red-600 border border-red-100 hover:bg-red-100"
-                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                  }`}
-              >
-                {hasActiveDeliveries ? "Delivering..." : "End Trip"}
-              </button>
-              {!canEndTrip && (
-                <p className="text-xs text-gray-400 mt-2 font-medium">Complete all active deliveries to end trip</p>
-              )}
-            </div>
-          ) : (
-            <div className="text-center">
-              <p className="text-sm font-medium text-gray-400 mb-4">Select orders below to start</p>
-              <button
-                onClick={handleTripAction}
-                disabled={selectedOrderIds.size === 0}
-                className={`w-full py-4 rounded-xl font-bold text-lg uppercase tracking-wide shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 ${selectedOrderIds.size > 0
-                  ? "bg-blue-600 text-white hover:bg-blue-700 shadow-blue-500/30"
-                  : "bg-gray-100 text-gray-300 cursor-not-allowed"
-                  }`}
-              >
-                <Truck size={24} />
-                Start Trip {selectedOrderIds.size > 0 && `(${selectedOrderIds.size})`}
-              </button>
-            </div>
-          );
-        })()}
-      </div>
-
-      {/* 3. Active Deliveries Section */}
-      <div className="w-full">
-        <div className="flex justify-between items-center mb-4 px-1">
-          <h2 className="text-lg font-bold text-gray-800">
-            Active Deliveries
-          </h2>
-          <span className="text-sm bg-white border border-gray-200 text-gray-600 px-2.5 py-0.5 rounded-lg font-bold">
-            {deliveries.length}
-          </span>
-        </div>
-
-        {deliveries.length === 0 ? (
-          <div className="py-12 px-6 text-center bg-white rounded-2xl border border-dashed border-gray-200">
-            <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center text-gray-300 mx-auto mb-4">
-              <CheckCircle size={32} />
-            </div>
-            <h3 className="text-gray-900 font-bold text-lg mb-1">All Caught Up!</h3>
-            <p className="text-gray-400 text-sm">
-              No pending deliveries assigned to you.
-            </p>
-          </div>
-        ) : (
+        {/* ROUTE VIEW */}
+        {view === 'route' && !loading && (
           <div className="space-y-4">
-            {deliveries.map((order) => (
-              <div
-                key={order.id}
-                onClick={() => {
-                  if (
-                    !currentTrip &&
-                    ["pending", "assigned", "dispatched"].includes(order.status)
-                  ) {
-                    toggleOrderSelection(order.id);
-                  } else if (
-                    order.status === "on_trip" ||
-                    order.status === "on-the-road"
-                  ) {
-                    openDeliveryModal(order);
-                  }
-                }}
-                className={`bg-white p-5 rounded-xl shadow-sm border transition-all relative ${selectedOrderIds.has(order.id)
-                  ? "border-emerald-500 ring-1 ring-emerald-500 bg-emerald-50/10"
-                  : order.status === "on_trip" ||
-                    order.status === "on-the-road"
-                    ? "border-amber-400 ring-2 ring-amber-500/10"
-                    : "border-gray-100"
-                  }`}
-              >
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex items-start gap-4">
-                    {/* Checkbox for Selection - Only for pending/assigned/dispatched */}
-                    {!currentTrip &&
-                      ["pending", "assigned", "dispatched"].includes(
-                        order.status,
-                      ) && (
-                        <div className="mt-1">
-                          <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${selectedOrderIds.has(order.id) ? "bg-emerald-500 border-emerald-500" : "border-gray-300"}`}>
-                            {selectedOrderIds.has(order.id) && <CheckCircle size={14} className="text-white" />}
-                          </div>
+            {orders.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center animate-in fade-in zoom-in duration-300">
+                <div className="w-24 h-24 bg-slate-200 rounded-full flex items-center justify-center mb-6 text-slate-400">
+                  <Truck size={40} />
+                </div>
+                <h3 className="text-xl font-black text-slate-700">All Clear!</h3>
+                <p className="text-slate-500 text-sm mt-2 font-medium max-w-[200px]">No pending deliveries assigned to you at the moment.</p>
+                <button onClick={loadData} className="mt-6 px-6 py-3 bg-white border border-slate-200 shadow-sm rounded-full font-bold text-slate-600 active:scale-95 transition-transform text-sm">
+                  Check for Updates
+                </button>
+              </div>
+            ) : (
+              orders.map(order => (
+                <div key={order.id} className="bg-white rounded-xl shadow-md border-0 ring-1 ring-slate-100 overflow-hidden transform transition-all active:scale-[99%]">
+                  {/* Card Header */}
+                  <div className="p-5 border-b border-slate-50 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-2 opacity-5">
+                      <Truck size={64} />
+                    </div>
+                    <div className="relative z-10">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{getFriendlyId(order)}</span>
+                          <h3 className="text-lg font-black text-slate-800 leading-tight">{order.customers?.name}</h3>
                         </div>
-                      )}
-                    <div>
-                      <h3 className="font-bold text-gray-900 text-lg leading-tight">
-                        {order.customers?.name}
-                      </h3>
-                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mt-1">
-                        #{order.readable_id || order.id.slice(0, 6)}
+                        {order.status === 'on_trip' && (
+                          <span className="animate-pulse bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase px-2 py-1 rounded-full">Live</span>
+                        )}
+                        {order.status === 'assigned' && (
+                          <span className="bg-blue-50 text-blue-600 text-[10px] font-black uppercase px-2 py-1 rounded-full">Assigned</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-500 font-medium flex items-start gap-1.5 leading-snug">
+                        <MapPin size={14} className="shrink-0 mt-0.5 text-slate-400" />
+                        {order.customers?.address || 'Address not provided'}
                       </p>
                     </div>
                   </div>
 
-                  {/* Status Badge */}
-                  {order.status === "on_trip" ||
-                    order.status === "on-the-road" ? (
-                    <div className="flex flex-col items-end">
-                      <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-1 rounded-lg uppercase tracking-wider block">
-                        On Route
-                      </span>
+                  {/* Card Body */}
+                  <div className="p-5 pt-4">
+                    {/* Asset List */}
+                    <div className="bg-slate-50 rounded-lg p-3 mb-4 border border-slate-100">
+                      <p className="text-[10px] uppercase font-bold text-slate-400 mb-2 flex items-center gap-1">
+                        <Package size={12} /> Assigned Assets
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {order.cylinders && order.cylinders.length > 0 ? (
+                          order.cylinders.map((cyl: any, i: number) => (
+                            <span key={i} className="bg-white border border-slate-200 text-slate-700 text-xs font-bold px-2 py-1 rounded shadow-sm">
+                              📦 {cyl.serial_number}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">No specific assets linked</span>
+                        )}
+                      </div>
                     </div>
-                  ) : (
-                    <span
-                      className={`text-[10px] font-bold px-2 py-1 rounded-lg uppercase tracking-wider ${selectedOrderIds.has(order.id) ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}
-                    >
-                      {order.status}
-                    </span>
-                  )}
-                </div>
 
-                <div className="flex items-start gap-2 text-sm text-gray-600 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                  <MapPin size={16} className="text-gray-400 shrink-0 mt-0.5" />
-                  <span className="font-medium leading-snug">{order.customers?.address || "No Address Provided"}</span>
-                </div>
-
-                <div className="bg-gray-50/50 p-3 rounded-xl text-sm text-gray-600 mb-2 border border-gray-100">
-                  {order.order_items.map((item: any, i: number) => (
-                    <div key={i} className="flex justify-between mb-1 last:mb-0">
-                      <span className="font-medium text-gray-700">
-                        {item.product_name}
-                      </span>
-                      <span className="font-bold text-gray-900">
-                        x{item.quantity}
-                      </span>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-slate-50 rounded-lg p-3">
+                        <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">Qty</p>
+                        <p className="font-black text-xl text-slate-800">{order.order_items?.[0]?.quantity || 0}</p>
+                      </div>
+                      <div className="bg-emerald-50 rounded-lg p-3 text-right">
+                        <p className="text-[10px] uppercase font-bold text-emerald-600/60 mb-1">To Collect</p>
+                        <p className="font-black text-xl text-emerald-700">Rs {order.total_amount?.toLocaleString()}</p>
+                      </div>
                     </div>
-                  ))}
-                  <div className="border-t border-gray-200 mt-2 pt-2 flex justify-between font-bold text-gray-900">
-                    <span>Total</span>
-                    <span>Rs {order.total_amount.toLocaleString()}</span>
+                  </div>
+
+                  {/* Card Footer */}
+                  <div className="p-2 pb-3 px-3 flex gap-2">
+                    <a href={`tel:${order.customers?.phone}`} className="flex-1 py-3 bg-white border border-slate-200 text-slate-600 rounded-lg font-bold text-sm flex items-center justify-center gap-2 active:bg-slate-50">
+                      <Phone size={16} /> Call
+                    </a>
+
+                    {order.status === 'assigned' ? (
+                      <button
+                        onClick={() => handleSingleStart(order.id)}
+                        className="flex-[2] py-3 rounded-lg font-bold text-sm shadow-md flex items-center justify-center gap-2 text-white transition-all bg-slate-800 active:bg-slate-900"
+                      >
+                        <Truck size={16} /> Start Trip
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => openDeliveryModal(order)}
+                        className="flex-[2] py-3 rounded-lg font-bold text-sm shadow-md flex items-center justify-center gap-2 text-white transition-all bg-emerald-600 active:bg-emerald-700"
+                      >
+                        DELIVER & PAY
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                {/* Complete Delivery Button - Visible and Clickable */}
-                {(order.status === "on_trip" ||
-                  order.status === "on-the-road") && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openDeliveryModal(order);
-                      }}
-                      className="w-full mt-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2"
-                    >
-                      <CheckCircle size={18} />
-                      Complete Delivery
-                    </button>
-                  )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Expense Modal (Unchanged) */}
-      {showExpenseModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl relative max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
-            <button
-              onClick={() => setShowExpenseModal(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-gray-800"
-            >
-              <X size={24} />
-            </button>
-            <h2 className="text-xl font-bold mb-6 text-gray-900">
-              New Expense
-            </h2>
-            <form onSubmit={handleSaveExpense} className="space-y-4">
-              {/* File Upload */}
-              <div className="border-2 border-dashed border-gray-300 bg-gray-50 rounded-xl p-4 text-center hover:bg-gray-100 transition-colors relative">
-                <input type="file" accept="image/*" onChange={(e) => setExpenseFile(e.target.files?.[0] || null)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                <div className="flex flex-col items-center gap-2 text-gray-500">
-                  <UploadCloud size={32} />
-                  <span className="text-sm font-bold text-gray-900">{expenseFile ? expenseFile.name : "Tap to Upload Receipt *"}</span>
-                </div>
-              </div>
-
-              {/* Inputs */}
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Amount</label>
-                <input type="number" required placeholder="0.00" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} className="w-full p-4 bg-gray-50 text-gray-900 border border-gray-300 rounded-xl text-lg font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Category</label>
-                <select value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)} className="w-full p-4 bg-gray-50 text-gray-900 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-blue-500 outline-none">
-                  <option value="fuel">Fuel</option>
-                  <option value="vehicle_maint">Maintenance</option>
-                  <option value="staff_food">Food</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Description</label>
-                <textarea rows={2} placeholder="Details..." value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} className="w-full p-4 bg-gray-50 text-gray-900 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
-              </div>
-
-              <button type="submit" disabled={submittingExpense} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl text-lg mt-2 shadow-md disabled:opacity-50">
-                {submittingExpense ? "Uploading..." : "Save Expense"}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Delivery Modal (Existing Wrapper) */}
-      {showDeliveryModal && selectedOrder && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          {/* Reusing existing Delivery Modal Internal Logic, just ensuring wrapper aligns */}
-          {/* Copying the EXACT internal structure from previous steps to ensure no functionality loss */}
-          <div className="bg-white p-6 rounded-2xl w-full max-w-sm shadow-2xl relative animate-in fade-in zoom-in duration-200">
-            <button onClick={() => setShowDeliveryModal(false)} className="absolute top-4 right-4 text-gray-400"><X size={24} /></button>
-
-            {deliveryStep === "payment" ? (
-              <>
-                <h2 className="text-xl font-bold text-gray-900 mb-2">Complete Delivery</h2>
-                <div className="bg-gray-50 p-4 rounded-xl mb-6 text-center border border-gray-200">
-                  <span className="text-xs font-bold text-gray-400 uppercase">Amount Due</span>
-                  <div className="text-3xl font-black text-gray-900">Rs {selectedOrder.total_amount.toLocaleString()}</div>
-                </div>
-
-                {/* Cylinder Serials */}
-                <div className="mb-4">
-                  <label className="text-xs font-bold text-gray-400 uppercase mb-1 block">Returned Empty Serials</label>
-                  <input type="text" placeholder="e.g. RG-005" value={cylinderSerials} onChange={(e) => setCylinderSerials(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-blue-500 outline-none uppercase text-gray-900" />
-                </div>
-
-                {/* Proof */}
-                <div className="mb-6">
-                  <label className="text-xs font-bold text-gray-400 uppercase mb-1 block">Proof</label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 bg-gray-50 text-center relative hover:bg-gray-100">
-                    <input type="file" accept="image/*" onChange={(e) => setDeliveryProof(e.target.files?.[0] || null)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                    <div className="flex flex-col items-center gap-1 text-gray-500"><UploadCloud size={24} /><span className="text-sm font-bold">{deliveryProof ? deliveryProof.name : "Tap to Upload"}</span></div>
-                  </div>
-                </div>
-
-                {/* Amount Received */}
-                <div className="mb-4">
-                  <label className="text-xs font-bold text-gray-400 uppercase mb-1 block">Received (Rs)</label>
-                  <input type="number" value={receivedAmount} onChange={(e) => setReceivedAmount(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-300 rounded-xl text-3xl font-black text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none" placeholder="0" />
-                </div>
-
-                <button onClick={handleDeliverySubmit} disabled={isSubmittingDelivery} className="w-full bg-emerald-600 text-white py-4 rounded-xl font-bold shadow-lg disabled:opacity-50">
-                  {isSubmittingDelivery ? "Processing..." : "Confirm & Complete"}
-                </button>
-              </>
-            ) : (
-              <div className="text-center py-4">
-                <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center text-green-600 mb-4"><CheckCircle size={32} /></div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Success!</h2>
-                <p className="text-gray-500 mb-6">Order Completed.</p>
-
-                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 grid grid-cols-2 gap-4">
-                  <div className="text-center"><span className="text-xs font-bold text-emerald-600 uppercase block mb-1">Delivered</span><span className="text-2xl font-black text-gray-900">{deliverySummary.delivered}</span></div>
-                  <div className="text-center border-l border-gray-200"><span className="text-xs font-bold text-gray-500 uppercase block mb-1">Empties</span><span className="text-2xl font-black text-gray-900">{deliverySummary.collected}</span></div>
-                </div>
-
-                <button onClick={() => {
-                  const invoiceUrl = `${window.location.origin}/invoice/${selectedOrder.id}`;
-                  const text = `Salam ${selectedOrder.customers?.name}, Your order is delivered! 🚛%0A%0A📄 Invoice: ${invoiceUrl}%0A💰 Total: Rs ${selectedOrder.total_amount.toLocaleString()}%0A%0AThank you!`;
-                  window.open(`https://wa.me/${selectedOrder.customers?.phone}?text=${text}`, "_blank");
-                  setShowDeliveryModal(false);
-                }} className="w-full bg-green-500 text-white font-bold py-4 rounded-xl shadow-lg flex items-center justify-center gap-2">
-                  <Smartphone size={24} /> Share Invoice
-                </button>
-              </div>
+              ))
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Handover Modal (Existing Wrapper) */}
-      {showHandoverModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          {/* ... Keep existing logic ... */}
-          <div className="bg-white p-6 rounded-2xl w-full max-w-sm relative animate-in fade-in zoom-in duration-200">
-            <button onClick={() => setShowHandoverModal(false)} className="absolute top-4 right-4 text-gray-400"><X size={24} /></button>
-            <h2 className="text-xl font-bold text-gray-900 mb-1">Handover Cash</h2>
-            <p className="text-sm text-gray-500 mb-6">Transfer cash to Head Office</p>
-            <form onSubmit={handleHandoverSubmit} className="space-y-4">
-              <div>
-                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Amount</label>
-                <input type="number" autoFocus required value={handoverAmount} onChange={(e) => setHandoverAmount(e.target.value)} className="w-full p-4 bg-gray-50 border border-gray-300 rounded-xl text-3xl font-black text-gray-900 focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="0" />
+        {/* HISTORY VIEW */}
+        {view === 'history' && !loading && (
+          <div className="space-y-3">
+            {completed.map(order => (
+              <div key={order.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex justify-between items-center opacity-75 grayscale hover:grayscale-0 transition-all">
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{getFriendlyId(order)}</p>
+                  <p className="font-bold text-slate-900 text-sm">{order.customers?.name}</p>
+                  <p className="text-xs text-slate-500 font-medium">{format(new Date(order.created_at), 'h:mm a · MMM dd')}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-emerald-600 font-black">Rs {order.total_amount?.toLocaleString()}</p>
+                  <a
+                    href={`https://wa.me/?text=Invoice for Order ${getFriendlyId(order)}: Rs ${order.total_amount} - Paid via Cash`}
+                    target="_blank"
+                    className="text-[10px] font-bold text-emerald-500 flex items-center justify-end gap-1 mt-1 hover:text-emerald-700"
+                  >
+                    <Share2 size={12} /> Share Invoice
+                  </a>
+                </div>
               </div>
+            ))}
+            {completed.length === 0 && <p className="text-center text-slate-400 py-12 text-sm font-medium">No completed orders today.</p>}
+          </div>
+        )}
+      </main>
+
+      {/* DELIVERY MODAL - Centered & Responsive */}
+      {
+        activeOrder && (
+          <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in zoom-in duration-200">
+            <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative max-h-[90vh] overflow-y-auto">
+              <button onClick={() => setActiveOrder(null)} className="absolute top-4 right-4 bg-slate-100 p-2 rounded-full text-slate-500 hover:bg-slate-200 z-10"><X size={20} /></button>
+
+              <div className="p-6 pb-2">
+                <h3 className="text-2xl font-black text-slate-900 tracking-tight">Collect Payment</h3>
+                <p className="text-slate-500 text-sm font-medium">{getFriendlyId(activeOrder)} • {activeOrder.customers?.name}</p>
+              </div>
+
+              <div className="p-6 space-y-6">
+
+                {/* Payment Section */}
+                <div>
+                  <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
+                    <button
+                      onClick={() => handlePaymentMethodChange('cash')}
+                      className={`flex-1 py-3 font-bold text-sm rounded-lg transition-all shadow-sm ${paymentMethod === 'cash' ? 'bg-white text-emerald-700 ring-1 ring-slate-200' : 'text-slate-400 shadow-none'}`}
+                    >
+                      CASH
+                    </button>
+                    <button
+                      onClick={() => handlePaymentMethodChange('credit')}
+                      className={`flex-1 py-3 font-bold text-sm rounded-lg transition-all shadow-sm ${paymentMethod === 'credit' ? 'bg-white text-amber-600 ring-1 ring-slate-200' : 'text-slate-400 shadow-none'}`}
+                    >
+                      CREDIT
+                    </button>
+                  </div>
+
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Amount Received</label>
+                  <div className="relative">
+                    <div className="absolute left-4 top-4 text-slate-400 font-bold">Rs</div>
+                    <input
+                      type="number"
+                      value={receivedAmount}
+                      onChange={(e) => setReceivedAmount(e.target.value)}
+                      className="w-full h-14 pl-10 bg-slate-50 rounded-xl border border-slate-200 font-black text-2xl text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder:text-slate-300"
+                      placeholder="0"
+                    />
+                  </div>
+
+                  {/* Debt Warning */}
+                  {parseFloat(receivedAmount || '0') < activeOrder.total_amount && (
+                    <div className="mt-3 bg-amber-50 p-3 rounded-lg border border-amber-100 flex items-start gap-2">
+                      <AlertCircle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                      <p className="text-xs text-amber-700 font-bold leading-tight">
+                        Rs {(activeOrder.total_amount - (parseFloat(receivedAmount) || 0)).toLocaleString()} added to Ledger.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Proof Upload (Only if Cash > 0) */}
+                {parseFloat(receivedAmount || '0') > 0 && paymentMethod === 'cash' && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Proof of Payment</label>
+                    <label className={`flex flex-col items-center justify-center h-28 border-2 border-dashed rounded-xl cursor-pointer transition-all ${proofFile ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 bg-white hover:bg-slate-50'}`}>
+                      {proofFile ? (
+                        <div className="text-emerald-600 font-bold text-sm flex flex-col items-center gap-1 animate-in zoom-in">
+                          <Check size={24} className="bg-emerald-100 p-1 rounded-full" />
+                          <span>Image Attached</span>
+                        </div>
+                      ) : (
+                        <>
+                          <Camera size={28} className="text-slate-400 mb-2" />
+                          <span className="text-xs text-slate-500 font-bold">Tap to Take Photo</span>
+                        </>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {/* Inventory Returns (Asset Swap) */}
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-3 flex justify-between items-center">
+                    <span>Select Returning Assets</span>
+                    {loadingAssets && <RefreshCw size={12} className="animate-spin text-emerald-500" />}
+                  </label>
+
+                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    {customerAssets.length > 0 ? (
+                      customerAssets.map((asset) => (
+                        <label key={asset.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${selectedReturns.includes(asset.serial_number) ? 'bg-white border-emerald-500 shadow-sm' : 'border-transparent hover:bg-white/50'}`}>
+                          <div className={`w-5 h-5 rounded flex items-center justify-center border ${selectedReturns.includes(asset.serial_number) ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 bg-white'}`}>
+                            {selectedReturns.includes(asset.serial_number) && <Check size={14} strokeWidth={3} />}
+                          </div>
+                          <input
+                            type="checkbox"
+                            className="hidden"
+                            checked={selectedReturns.includes(asset.serial_number)}
+                            onChange={() => toggleReturnAsset(asset.serial_number)}
+                          />
+                          <div>
+                            <p className="font-bold text-slate-700 text-sm">📦 {asset.serial_number}</p>
+                            <p className="text-[10px] uppercase font-bold text-slate-400">{asset.status === 'at_customer' ? 'At Customer' : asset.status}</p>
+                          </div>
+                        </label>
+                      ))
+                    ) : (
+                      <div className="text-center py-4">
+                        <p className="text-sm text-slate-400 font-medium">No assets found for this customer.</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Fallback Manual Entry (Hidden mostly, or optional) */}
+                  {customerAssets.length === 0 && (
+                    <div className="mt-3 pt-3 border-t border-slate-200">
+                      <p className="text-[10px] uppercase font-bold text-slate-400 mb-2">Manual Count (Fallback)</p>
+                      <div className="flex items-center bg-white rounded-lg p-1 border border-slate-200">
+                        <button onClick={() => setReturnsCount(Math.max(0, parseInt(returnsCount) - 1).toString())} className="w-10 h-10 rounded shadow-sm font-bold text-slate-500 active:bg-slate-50">-</button>
+                        <input
+                          type="number"
+                          value={returnsCount}
+                          onChange={(e) => setReturnsCount(e.target.value)}
+                          className="flex-1 h-10 bg-transparent text-center font-bold text-slate-900 outline-none"
+                        />
+                        <button onClick={() => setReturnsCount((parseInt(returnsCount) + 1).toString())} className="w-10 h-10 rounded shadow-sm font-bold text-slate-500 active:bg-slate-50">+</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-4 bg-white border-t border-slate-100">
+                <button
+                  onClick={handleDeliverySubmit}
+                  disabled={submitting}
+                  className="w-full py-4 bg-slate-900 text-white rounded-xl font-black uppercase text-lg shadow-xl active:scale-95 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                >
+                  {submitting ? <RefreshCw className="animate-spin" /> : 'Confirm Delivery'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+      {/* HANDOVER MODAL */}
+      {showHandover && (
+        <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in zoom-in duration-200">
+          <div className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setShowHandover(false)} className="absolute top-4 right-4 bg-slate-100 p-2 rounded-full text-slate-500 hover:bg-slate-200 z-10"><X size={20} /></button>
+
+            <div className="p-6 pb-2">
+              <h3 className="text-2xl font-black text-slate-900 tracking-tight">Deposit & Return</h3>
+              <p className="text-slate-500 text-sm font-medium">Handover cash and assets to Warehouse.</p>
+            </div>
+
+            <div className="p-6 space-y-6">
+
+              {/* Receiver Selection - REQUIRED */}
               <div>
-                <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Receiver</label>
-                <select required value={handoverReceiver} onChange={(e) => setHandoverReceiver(e.target.value)} className="w-full p-3 bg-gray-50 border border-gray-300 rounded-xl font-medium focus:ring-2 focus:ring-emerald-500 outline-none text-gray-900">
-                  <option value="">Select Receiver...</option>
-                  {cashiers.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.role === "cashier" ? "Cashier" : c.role})</option>)}
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Handover To (Admin)</label>
+                <select
+                  value={selectedReceiver}
+                  onChange={(e) => setSelectedReceiver(e.target.value)}
+                  className="w-full h-14 bg-slate-50 border border-slate-200 rounded-xl px-4 font-bold text-slate-700 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all"
+                >
+                  <option value="" disabled>Select Receiver</option>
+                  {receivers.map(r => (
+                    <option key={r.id} value={r.id}>{r.name} ({r.role})</option>
+                  ))}
                 </select>
               </div>
-              <button type="submit" disabled={handingOver} className="w-full bg-emerald-600 text-white font-bold py-4 rounded-xl shadow-lg disabled:opacity-50">
-                {handingOver ? "Recording..." : "Record Handover"}
+
+              {/* Cash Deposit Section */}
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Cash Deposit</label>
+                <div className="relative">
+                  <div className="absolute left-4 top-4 text-slate-400 font-bold">Rs</div>
+                  <input
+                    type="number"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    className="w-full h-14 pl-10 bg-slate-50 rounded-xl border border-slate-200 font-black text-2xl text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder:text-slate-300"
+                    placeholder="0"
+                  />
+                </div>
+                <div className="mt-2 flex justify-between items-center text-xs">
+                  <span className="font-medium text-slate-500">Liability: <span className="text-slate-900 font-bold">Rs {stats.cashLiability.toLocaleString()}</span></span>
+                  <button onClick={() => setDepositAmount(stats.cashLiability.toString())} className="text-emerald-600 font-bold hover:underline">Max</button>
+                </div>
+              </div>
+
+              {/* Asset Return Section */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-3 flex justify-between items-center">
+                  <span>Select Assets to Return</span>
+                  {loadingAssets && <RefreshCw size={12} className="animate-spin text-emerald-500" />}
+                </label>
+
+                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                  {driverAssets.length > 0 ? (
+                    driverAssets.map((asset) => (
+                      <label key={asset.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${selectedHandoverAssets.includes(asset.serial_number) ? 'bg-white border-emerald-500 shadow-sm' : 'border-transparent hover:bg-white/50'}`}>
+                        <div className={`w-5 h-5 rounded flex items-center justify-center border ${selectedHandoverAssets.includes(asset.serial_number) ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 bg-white'}`}>
+                          {selectedHandoverAssets.includes(asset.serial_number) && <Check size={14} strokeWidth={3} />}
+                        </div>
+                        <input
+                          type="checkbox"
+                          className="hidden"
+                          checked={selectedHandoverAssets.includes(asset.serial_number)}
+                          onChange={() => toggleHandoverAsset(asset.serial_number)}
+                        />
+                        <div>
+                          <p className="font-bold text-slate-700 text-sm">📦 {asset.serial_number}</p>
+                          <p className="text-[10px] uppercase font-bold text-slate-400">{asset.status.toUpperCase()}</p>
+                        </div>
+                      </label>
+                    ))
+                  ) : (
+                    <div className="text-center py-4">
+                      <p className="text-sm text-slate-400 font-medium">Truck is empty.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            <div className="p-4 bg-white border-t border-slate-100">
+              <button
+                onClick={handleHandoverSubmit}
+                disabled={submitting}
+                className="w-full py-4 bg-slate-900 text-white rounded-xl font-black uppercase text-lg shadow-xl active:scale-95 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+              >
+                {submitting ? <RefreshCw className="animate-spin" /> : 'Submit for Approval'}
               </button>
-            </form>
+            </div>
           </div>
         </div>
       )}

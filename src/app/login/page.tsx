@@ -3,8 +3,12 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Shield, ChevronRight, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
+import { Shield, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 
 export default function LoginPage() {
     const [email, setEmail] = useState('');
@@ -19,7 +23,7 @@ export default function LoginPage() {
         setErrorMsg(null);
 
         try {
-            // 1. Authenticate with Supabase Auth
+            // 1. Authenticate
             const { data: { user }, error: authError } = await supabase.auth.signInWithPassword({
                 email,
                 password,
@@ -29,13 +33,12 @@ export default function LoginPage() {
                 if (authError.message.includes('Invalid login credentials')) {
                     throw new Error('Incorrect Email or Password.');
                 }
-                throw authError; // Throw original for other cases
+                throw authError;
             }
 
-            if (!user) throw new Error('Authentication outcome unknown. Please try again.');
+            if (!user) throw new Error('Authentication failed. Please try again.');
 
-            // 2. Fetch User Profile from Public Table
-            // Using 'maybeSingle' to handle missing profiles gracefully without throwing immediatley
+            // 2. Fetch Profile
             const { data: profile, error: profileError } = await supabase
                 .from('users')
                 .select('*')
@@ -47,30 +50,24 @@ export default function LoginPage() {
                 throw new Error('System Error: Unable to retrieve user profile.');
             }
 
-            // 3. Verify Identity/Profile Exists
+            // 3. Verify Identity
             if (!profile) {
-                // This is the "Ghost User" scenario
-                // We can offer a specific message or actions here.
                 throw new Error('Account Setup Incomplete: Identity Missing. Please contact Admin.');
             }
 
-            // 4. Check Role Access
+            // 4. Check Role
             const role = profile.role;
             if (!role) {
-                throw new Error('Access Denied: No role assigned to this account.');
+                throw new Error('Access Denied: No role assigned.');
             }
 
             // Success
             toast.success(`Welcome back, ${profile.name || 'User'}`);
 
-            // Redirect based on role
-            if (role === 'admin') {
-                router.push('/admin');
-            } else if (role === 'driver') {
-                router.push('/driver');
-            } else {
-                router.push('/');
-            }
+            // Redirect
+            if (role === 'admin') router.push('/admin');
+            else if (role === 'driver') router.push('/driver');
+            else router.push('/');
 
         } catch (error: any) {
             console.error('Login Error:', error);
@@ -82,84 +79,78 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
-            <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden">
-
-                {/* Header */}
-                <div className="bg-emerald-600 p-8 text-center relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-full bg-emerald-700/20 z-0"></div>
-                    <div className="relative z-10">
-                        <div className="mx-auto w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center mb-4 text-white">
-                            <Shield size={32} />
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+            <Card className="w-full max-w-md overflow-hidden border-0 shadow-lg ring-1 ring-slate-900/5">
+                <CardHeader className="bg-primary p-8 text-center text-primary-foreground relative overflow-hidden">
+                    <div className="absolute inset-0 bg-black/10 z-0"></div>
+                    <div className="relative z-10 flex flex-col items-center">
+                        <div className="mb-8">
+                            <div className="bg-emerald-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6 text-emerald-600">
+                                <Shield size={32} />
+                            </div>
+                            <h1 className="text-3xl font-black text-slate-900 tracking-tight">SaaS Login</h1>
+                            <p className="text-slate-500 mt-2 font-medium">LPG Management System</p>
                         </div>
-                        <h1 className="text-2xl font-black text-white uppercase tracking-tight">Raza Gas</h1>
-                        <p className="text-emerald-100 font-medium text-sm">Secure ERP Access</p>
                     </div>
-                </div>
+                </CardHeader>
 
-                {/* Form */}
-                <div className="p-8">
+                <CardContent className="p-8 pt-8">
                     {errorMsg && (
-                        <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-xl flex items-start gap-3 text-red-600 animate-in fade-in slide-in-from-top-2">
+                        <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-lg flex items-start gap-3 text-destructive animate-in fade-in slide-in-from-top-2">
                             <AlertCircle size={20} className="shrink-0 mt-0.5" />
                             <p className="text-sm font-semibold">{errorMsg}</p>
                         </div>
                     )}
 
                     <form onSubmit={handleLogin} className="space-y-6">
-                        <div>
-                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Email Address</label>
+                        <div className="space-y-2">
+                            <Label htmlFor="email" className="text-muted-foreground uppercase text-xs font-bold">Email Address</Label>
                             <div className="relative">
-                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                <input
+                                <Mail className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
+                                <Input
+                                    id="email"
                                     type="email"
                                     required
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none transition-all placeholder:text-slate-300"
-                                    placeholder="admin@razagas.com"
+                                    className="pl-10"
+                                    placeholder="admin@aligas.com"
                                 />
                             </div>
                         </div>
 
-                        <div>
-                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Password</label>
+                        <div className="space-y-2">
+                            <Label htmlFor="password" className="text-muted-foreground uppercase text-xs font-bold">Password</Label>
                             <div className="relative">
-                                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                <input
+                                <Lock className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
+                                <Input
+                                    id="password"
                                     type="password"
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none transition-all placeholder:text-slate-300"
+                                    className="pl-10"
                                     placeholder="••••••••"
                                 />
                             </div>
                         </div>
 
-                        <button
+                        <Button
                             type="submit"
-                            disabled={loading}
-                            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100"
+                            className="w-full h-12 text-base font-bold shadow-md shadow-primary/20"
+                            isLoading={loading}
                         >
-                            {loading ? (
-                                <Loader2 size={20} className="animate-spin" />
-                            ) : (
-                                <>
-                                    Sign In <ChevronRight size={18} />
-                                </>
-                            )}
-                        </button>
+                            Sign In
+                        </Button>
                     </form>
 
-                    <div className="mt-6 text-center">
-                        <p className="text-xs text-slate-400">
+                    <div className="mt-8 text-center">
+                        <p className="text-xs text-muted-foreground">
                             System Access is restricted. <br /> Contact Administrator for support.
                         </p>
                     </div>
-                </div>
-
-            </div>
+                </CardContent>
+            </Card>
         </div>
     );
 }

@@ -3,16 +3,22 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
-import { Copy, Plus, Archive, Filter, CheckCircle, ArrowRight, Database, RefreshCw, UploadCloud } from 'lucide-react';
+import { Copy, Plus, Archive, Filter, CheckCircle, ArrowRight, Database, RefreshCw, UploadCloud, QrCode, Truck } from 'lucide-react';
 import Link from 'next/link';
+import QRCodeGenerator from '@/components/admin/QRCodeGenerator';
+import StockImportModal from '@/components/admin/inventory/StockImportModal';
+import PlantOperationsModal from '@/components/admin/inventory/PlantOperationsModal';
+import { getTenantInfo } from '@/app/actions/adminActions';
+import { createCylinder, getCylinders, updateCylinderStatus } from '@/app/actions/cylinderActions';
 
 interface Cylinder {
     id: string;
     serial_number: string;
     type: '45.4KG';
-    status: 'full' | 'empty' | 'missing' | 'maintenance';
-    current_location_type: 'godown' | 'shop' | 'driver' | 'customer';
+    status: 'full' | 'empty' | 'missing' | 'maintenance' | 'at_customer';
+    current_location_type: 'warehouse' | 'shop' | 'driver' | 'customer';
     condition: string;
+    tenant_id?: string;
 }
 
 export default function CylinderRegistry() {
@@ -20,9 +26,14 @@ export default function CylinderRegistry() {
     const [loading, setLoading] = useState(true);
     const [generating, setGenerating] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [showQRModal, setShowQRModal] = useState(false);
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [showPlantModal, setShowPlantModal] = useState(false);
+    const [tenantId, setTenantId] = useState('');
 
     // Bulk Form State
-    const [bulkPrefix, setBulkPrefix] = useState('RG-');
+    const [bulkPrefix, setBulkPrefix] = useState('');
+    const [tenantName, setTenantName] = useState('');
     const [bulkStart, setBulkStart] = useState('');
     const [bulkEnd, setBulkEnd] = useState('');
 
@@ -35,44 +46,58 @@ export default function CylinderRegistry() {
     const [refilling, setRefilling] = useState(false);
 
     useEffect(() => {
-        fetchCylinders();
+        loadData();
     }, []);
 
-    const fetchCylinders = async () => {
+    const loadData = async () => {
         setLoading(true);
-        const { data, error } = await supabase
-            .from('cylinders')
-            .select('*')
-            .order('serial_number', { ascending: true });
+        try {
+            // 1. Fetch Tenant Name & Generate Prefix
+            const info = await getTenantInfo();
+            const name = info.name || "My Organization";
+            setTenantName(name);
 
-        if (error) {
-            toast.error('Failed to load cylinders');
-        } else {
+            // Generate Prefix: "Ali Gas" -> "AG-"
+            const generatedPrefix = name
+                .split(' ')
+                .map((word: string) => word[0])
+                .join('')
+                .toUpperCase() + "-";
+            setBulkPrefix(generatedPrefix);
+
+            // 2. Fetch Cylinders securely
+            const data = await getCylinders();
             // @ts-ignore
-            setCylinders(data || []);
+            setCylinders(data);
+
+            // 3. Get Tenant ID for QR
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user?.app_metadata?.tenant_id) {
+                setTenantId(user.app_metadata.tenant_id);
+            }
+
+        } catch (error) {
+            toast.error('Failed to load inventory data');
+            console.error(error);
+        } finally {
+            setLoading(false);
         }
-        setLoading(false);
     };
 
     const handleRefill = async () => {
         if (selectedIds.length === 0) return;
         setRefilling(true);
         try {
-            const { error } = await supabase
-                .from('cylinders')
-                .update({
-                    status: 'full',
-                    current_location_type: 'godown', // Critical: Set location to Godown so it appears in Dispatch
-                    updated_at: new Date().toISOString()
-                })
-                .in('id', selectedIds);
+            // Use Secure Action for updates
+            // (Note: Ideally updateCylinderStatus should handle bulk, but we loop for now or add bulk action)
+            const promises = selectedIds.map(id => updateCylinderStatus(id, 'full'));
+            await Promise.all(promises);
 
-            if (error) throw error;
             toast.success(`Refilled ${selectedIds.length} cylinders!`);
             setSelectedIds([]);
-            fetchCylinders();
+            await loadData(); // Reload list
         } catch (error: any) {
-            toast.error('Refill failed');
+            toast.error('Refill failed: ' + error.message);
         } finally {
             setRefilling(false);
         }
@@ -110,34 +135,40 @@ export default function CylinderRegistry() {
         }
 
         setGenerating(true);
-        const newCylinders = [];
-
-        for (let i = start; i <= end; i++) {
-            // Pad number with leading zeros (e.g., 001)
-            const numStr = i.toString().padStart(3, '0');
-            newCylinders.push({
-                serial_number: `${bulkPrefix}${numStr}`,
-                type: '45.4KG',
-                status: 'full',
-                current_location_type: 'godown',
-                condition: 'good'
-            });
-        }
+        let successCount = 0;
+        let errors = 0;
 
         try {
-            const { error } = await supabase.from('cylinders').insert(newCylinders);
-            if (error) {
-                if (error.code === '23505') { // Unique constraint
-                    toast.error('Some serial numbers already exist. Check duplicates.');
+            // Loop and use Secure Action (Server-Side)
+            // Ideally we'd have a bulkCreate action, but looping createCylinder ensures strict validation per item
+            for (let i = start; i <= end; i++) {
+                const numStr = i.toString().padStart(3, '0');
+                const serial = `${bulkPrefix}${numStr}`;
+
+                const formData = new FormData();
+                formData.append('serial_number', serial);
+                formData.append('type', '45.4KG');
+                formData.append('status', 'full');
+
+                const result = await createCylinder(null, formData);
+                if (result?.error) {
+                    errors++;
+                    console.error(`Failed to create ${serial}:`, result.error);
                 } else {
-                    throw error;
+                    successCount++;
                 }
-            } else {
-                toast.success(`Successfully generated ${newCylinders.length} cylinders!`);
-                setBulkStart('');
-                setBulkEnd('');
-                fetchCylinders();
             }
+
+            if (errors > 0) {
+                toast.warning(`Generated ${successCount} assets. ${errors} failed (duplicates?).`);
+            } else {
+                toast.success(`Successfully generated ${successCount} cylinders!`);
+            }
+
+            setBulkStart('');
+            setBulkEnd('');
+            await loadData();
+
         } catch (error: any) {
             toast.error(`Error: ${error.message}`);
         } finally {
@@ -151,19 +182,20 @@ export default function CylinderRegistry() {
 
         setGenerating(true);
         try {
-            const { error } = await supabase.from('cylinders').insert([{
-                serial_number: singleSerial.toUpperCase(),
-                type: '45.4KG',
-                status: 'full',
-                current_location_type: 'godown',
-                condition: 'good'
-            }]);
+            const formData = new FormData();
+            formData.append('serial_number', singleSerial.toUpperCase());
+            formData.append('type', '45.4KG');
+            formData.append('status', 'full');
 
-            if (error) throw error;
+            const result = await createCylinder(null, formData);
+
+            if (result?.error) {
+                throw new Error(result.error);
+            }
 
             toast.success(`Cylinder ${singleSerial} added!`);
             setSingleSerial('');
-            fetchCylinders();
+            await loadData();
         } catch (error: any) {
             toast.error(error.message);
         } finally {
@@ -175,17 +207,33 @@ export default function CylinderRegistry() {
         c.serial_number.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    // Smart Action Bar Logic
+    const selectedCylinders = filteredCylinders.filter(c => selectedIds.includes(c.id));
+    const allInWarehouse = selectedCylinders.every(c => c.current_location_type === 'warehouse');
+    const allEmpty = selectedCylinders.every(c => c.status === 'empty');
+    const allFull = selectedCylinders.every(c => c.status === 'full');
+
+
     return (
         <div className="p-8 bg-slate-50 min-h-screen pb-32 font-sans">
             <div className="flex justify-between items-center mb-8">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Cylinder Registry</h1>
-                    <p className="text-sm text-slate-500 font-medium">Manage fleet of 45.4KG Cylinders</p>
+                    <h1 className="text-3xl font-black text-slate-800 tracking-tight">Inventory</h1>
+                    <p className="text-sm text-slate-500 font-medium">Manage fleet for <span className="text-slate-900 font-bold">{tenantName}</span></p>
                 </div>
                 <div className="flex items-center gap-3">
-                    <Link href="/admin/import" className="bg-blue-50 text-blue-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-100 transition-colors">
-                        <UploadCloud size={16} /> Bulk Import Stock
-                    </Link>
+                    <button
+                        onClick={() => setShowPlantModal(true)}
+                        className="bg-orange-50 text-orange-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-100 transition-colors border border-orange-100"
+                    >
+                        <Truck size={16} /> Plant Operations
+                    </button>
+                    <button
+                        onClick={() => setShowImportModal(true)}
+                        className="bg-blue-50 text-blue-600 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-100 transition-colors"
+                    >
+                        <UploadCloud size={16} /> Upload Legacy Data
+                    </button>
                     <div className="bg-white px-4 py-2 rounded-lg shadow-sm border border-slate-200 text-sm font-bold text-slate-700 flex items-center gap-2">
                         <Database size={16} className="text-emerald-600" />
                         Total Assets: <span className="text-slate-900 text-lg">{cylinders.length}</span>
@@ -193,20 +241,90 @@ export default function CylinderRegistry() {
                 </div>
             </div>
 
-            {/* Bulk Actions */}
             {selectedIds.length > 0 && (
                 <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 w-[90%] max-w-lg animate-in slide-in-from-bottom-4 fade-in duration-200">
                     <div className="bg-gray-900/95 backdrop-blur-sm text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between border border-gray-800/50">
                         <span className="font-bold">{selectedIds.length} Selected</span>
-                        <button
-                            onClick={handleRefill}
-                            disabled={refilling}
-                            className="bg-emerald-500 hover:bg-emerald-400 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors"
-                        >
-                            {refilling ? 'Updating...' : <><RefreshCw size={16} /> Mark as Refilled (Full)</>}
-                        </button>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setShowQRModal(true)}
+                                className="bg-white text-slate-900 hover:bg-slate-100 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors"
+                            >
+                                <QrCode size={16} /> Print QRs
+                            </button>
+
+                            {allEmpty && (
+                                <>
+                                    {!allInWarehouse ? (
+                                        <button
+                                            onClick={handleRefill}
+                                            disabled={refilling}
+                                            className="bg-emerald-500 hover:bg-emerald-400 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors"
+                                        >
+                                            {refilling ? 'Updating...' : <><RefreshCw size={16} /> Mark Refilled</>}
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={async () => {
+                                                setRefilling(true);
+                                                await Promise.all(selectedIds.map(id => updateCylinderStatus(id, 'maintenance')));
+                                                toast.success("Sent to Plant");
+                                                await loadData();
+                                                setSelectedIds([]);
+                                                setRefilling(false);
+                                            }}
+                                            disabled={refilling}
+                                            className="bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors"
+                                        >
+                                            {refilling ? 'Updating...' : <><Truck size={16} /> Send to Plant</>}
+                                        </button>
+                                    )}
+                                </>
+                            )}
+
+                            {allFull && (
+                                <button
+                                    onClick={async () => {
+                                        setRefilling(true);
+                                        await Promise.all(selectedIds.map(id => updateCylinderStatus(id, 'maintenance')));
+                                        toast.success("Sent to Maintenance");
+                                        await loadData();
+                                        setSelectedIds([]);
+                                        setRefilling(false);
+                                    }}
+                                    disabled={refilling}
+                                    className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-colors"
+                                >
+                                    {refilling ? 'Updating...' : <><Truck size={16} /> Maintenance</>}
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
+            )}
+
+            {showQRModal && (
+                <QRCodeGenerator
+                    serialNumbers={filteredCylinders.filter(c => selectedIds.includes(c.id)).map(c => c.serial_number)}
+                    tenantId={tenantId}
+                    onClose={() => setShowQRModal(false)}
+                />
+            )}
+
+            {showImportModal && (
+                <StockImportModal
+                    onClose={() => setShowImportModal(false)}
+                    onSuccess={() => loadData()}
+                />
+            )}
+
+            {showPlantModal && (
+                <PlantOperationsModal
+                    onClose={() => setShowPlantModal(false)}
+                    onSuccess={() => loadData()}
+                    emptyCount={cylinders.filter(c => c.status === 'empty').length}
+                    maintenanceCount={cylinders.filter(c => c.status === 'maintenance').length}
+                />
             )}
 
             {/* Generator Card */}
@@ -216,7 +334,7 @@ export default function CylinderRegistry() {
                         onClick={() => setMode('bulk')}
                         className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold transition-all ${mode === 'bulk' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}
                     >
-                        <Copy size={18} /> Bulk Generator
+                        <Copy size={18} /> Register New Assets
                     </button>
                     <button
                         onClick={() => setMode('single')}
@@ -229,13 +347,13 @@ export default function CylinderRegistry() {
                 {mode === 'bulk' ? (
                     <form onSubmit={handleBulkGenerate} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
                         <div className="lg:col-span-1">
-                            <label className="text-label">Prefix</label>
+                            <label className="text-label">Prefix <span className='text-xs font-normal text-slate-400'>(Auto)</span></label>
                             <input
                                 type="text"
                                 value={bulkPrefix}
-                                onChange={(e) => setBulkPrefix(e.target.value)}
-                                className="input-field"
-                                placeholder="RG-"
+                                readOnly
+                                className="input-field bg-slate-50 text-slate-500 cursor-not-allowed"
+                                placeholder="..."
                             />
                         </div>
                         <div className="lg:col-span-1">
@@ -283,7 +401,7 @@ export default function CylinderRegistry() {
                                 value={singleSerial}
                                 onChange={(e) => setSingleSerial(e.target.value)}
                                 className="input-field uppercase"
-                                placeholder="RG-XX-000"
+                                placeholder={`${bulkPrefix}XX-000`}
                                 autoFocus
                             />
                         </div>
@@ -356,23 +474,30 @@ export default function CylinderRegistry() {
                                             />
                                         </td>
                                         <td className="p-4 font-bold text-slate-900">{c.serial_number}</td>
-                                        <td className="p-4 text-sm text-slate-600 font-bold">{c.type}</td>
+                                        <td className="p-4 text-sm text-gray-900 font-bold">{c.type}</td>
                                         <td className="p-4">
-                                            <span className={`px-2 py-1 rounded-full text-xs font-black uppercase tracking-wider ${c.status === 'full' ? 'bg-emerald-100 text-emerald-700' :
-                                                c.status === 'empty' ? 'bg-slate-100 text-slate-600' :
-                                                    c.status === 'missing' ? 'bg-rose-100 text-rose-700' :
-                                                        'bg-amber-100 text-amber-700'
+                                            <span className={`px-2 py-1 rounded-full text-xs font-black uppercase tracking-wider ${c.status === 'at_customer' ? 'bg-purple-100 text-purple-700' :
+                                                c.current_location_type === 'driver' ? 'bg-blue-100 text-blue-700' :
+                                                    c.status === 'full' ? 'bg-emerald-100 text-emerald-700' :
+                                                        c.status === 'empty' ? 'bg-slate-100 text-slate-600' :
+                                                            c.status === 'missing' ? 'bg-rose-100 text-rose-700' :
+                                                                'bg-amber-100 text-amber-700'
                                                 }`}>
-                                                {c.status}
+                                                {c.status === 'at_customer' ? 'At Customer' :
+                                                    c.current_location_type === 'driver' ? 'Assigned' :
+                                                        c.status}
                                             </span>
                                         </td>
                                         <td className="p-4">
                                             <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
-                                                {c.current_location_type === 'godown' && <Database size={14} className="text-slate-500" />}
-                                                {c.current_location_type === 'shop' && <Database size={14} className="text-emerald-500" />}
-                                                {c.current_location_type === 'driver' && <ArrowRight size={14} className="text-blue-500" />}
-                                                {c.current_location_type === 'customer' && <CheckCircle size={14} className="text-purple-500" />}
-                                                <span className="capitalize">{c.current_location_type}</span>
+                                                {c.current_location_type === 'warehouse' && <Database size={14} className="text-slate-500" />}
+                                                {/* @ts-ignore */}
+                                                {(c.current_location_type === 'driver' || c.current_location_type === 'customer') && <ArrowRight size={14} className="text-blue-500" />}
+
+                                                <span className="capitalize">
+                                                    {/* @ts-ignore */}
+                                                    {c.holder_name || c.current_location_type}
+                                                </span>
                                             </span>
                                         </td>
                                         <td className="p-4 text-sm text-slate-500 capitalize">{c.condition}</td>
