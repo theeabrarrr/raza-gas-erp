@@ -226,15 +226,20 @@ export async function completeDelivery(formData: FormData) {
             if (payError) throw new Error(`Failed to record Payment Transaction: ${payError.message}`);
 
             // Update Driver Wallet (Liability) if CASH
-            if (paymentMethod === 'cash') {
-                const { data: w } = await supabase.from('employee_wallets').select('balance').eq('user_id', user.id).single();
-                const current = w?.balance || 0;
-                await supabase.from('employee_wallets').upsert({
-                    user_id: user.id,
-                    balance: current + receivedAmount,
-                    updated_at: new Date().toISOString()
-                }, { onConflict: 'user_id' });
-            }
+            // Update Driver Wallet (Liability)
+            // Fix: Allow wallet update for 'credit' orders if they have a partial cash payment.
+            // We assume 'cash' and 'credit' (partial) involve physical money. 'bank' does not.
+            // Update Driver Wallet (Liability)
+            // Fix: We unconditionally update wallet if ANY cash is received (amount > 0), 
+            // regardless of whether the order is marked 'cash' or 'credit'.
+            // This handles partial payments correctly.
+            const { data: w } = await supabase.from('employee_wallets').select('balance').eq('user_id', user.id).single();
+            const current = w?.balance || 0;
+            await supabase.from('employee_wallets').upsert({
+                user_id: user.id,
+                balance: current + receivedAmount,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'user_id' });
         }
     } catch (err: any) {
         console.error("Critical Financial Error:", err);

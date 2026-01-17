@@ -3,12 +3,8 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Shield, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
+import { Shield, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 
 export default function LoginPage() {
     const [email, setEmail] = useState('');
@@ -79,22 +75,21 @@ export default function LoginPage() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-            <Card className="w-full max-w-md overflow-hidden border-0 shadow-lg ring-1 ring-slate-900/5">
-                <CardHeader className="bg-primary p-8 text-center text-primary-foreground relative overflow-hidden">
-                    <div className="absolute inset-0 bg-black/10 z-0"></div>
-                    <div className="relative z-10 flex flex-col items-center">
-                        <div className="mb-8">
-                            <div className="bg-emerald-100 w-16 h-16 rounded-2xl flex items-center justify-center mb-6 text-emerald-600">
-                                <Shield size={32} />
-                            </div>
-                            <h1 className="text-3xl font-black text-slate-900 tracking-tight">SaaS Login</h1>
-                            <p className="text-slate-500 mt-2 font-medium">LPG Management System</p>
-                        </div>
-                    </div>
-                </CardHeader>
+        <div className="min-h-screen bg-slate-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-emerald-50/50 to-slate-50">
+            <div className="sm:mx-auto sm:w-full sm:max-w-md">
+                <div className="mx-auto h-12 w-12 text-emerald-600 flex items-center justify-center">
+                    <Shield size={48} />
+                </div>
+                <h2 className="mt-6 text-center text-3xl font-bold tracking-tight text-slate-900">
+                    Sign in to your account
+                </h2>
+                <div className="mt-2 text-center">
+                    <p className="text-sm text-slate-600">Enter your credentials to access the workspace</p>
+                </div>
+            </div>
 
-                <CardContent className="p-8 pt-8">
+            <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-[480px]">
+                <div className="bg-white py-10 px-10 shadow-2xl rounded-2xl border border-slate-100 border-t-4 border-t-emerald-500">
                     {errorMsg && (
                         <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-lg flex items-start gap-3 text-destructive animate-in fade-in slide-in-from-top-2">
                             <AlertCircle size={20} className="shrink-0 mt-0.5" />
@@ -102,55 +97,62 @@ export default function LoginPage() {
                         </div>
                     )}
 
-                    <form onSubmit={handleLogin} className="space-y-6">
-                        <div className="space-y-2">
-                            <Label htmlFor="email" className="text-muted-foreground uppercase text-xs font-bold">Email Address</Label>
-                            <div className="relative">
-                                <Mail className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
-                                <Input
+                    <form className="space-y-6" onSubmit={handleLogin}>
+                        <div>
+                            <label htmlFor="email" className="block text-sm font-medium text-slate-700">
+                                Email Address
+                            </label>
+                            <div className="mt-1">
+                                <input
                                     id="email"
+                                    name="email"
                                     type="email"
+                                    autoComplete="email"
                                     required
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="pl-10"
-                                    placeholder="admin@aligas.com"
+                                    className="block w-full h-12 rounded-lg bg-slate-50 border-slate-200 shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all sm:text-sm outline-none px-4"
+                                    placeholder="name@company.com"
                                 />
                             </div>
                         </div>
 
-                        <div className="space-y-2">
-                            <Label htmlFor="password" className="text-muted-foreground uppercase text-xs font-bold">Password</Label>
-                            <div className="relative">
-                                <Lock className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
-                                <Input
+                        <div>
+                            <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+                                Password
+                            </label>
+                            <div className="mt-1">
+                                <input
                                     id="password"
+                                    name="password"
                                     type="password"
+                                    autoComplete="current-password"
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="pl-10"
+                                    className="block w-full h-12 rounded-lg bg-slate-50 border-slate-200 shadow-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all sm:text-sm outline-none px-4"
                                     placeholder="••••••••"
                                 />
                             </div>
                         </div>
 
-                        <Button
-                            type="submit"
-                            className="w-full h-12 text-base font-bold shadow-md shadow-primary/20"
-                            isLoading={loading}
-                        >
-                            Sign In
-                        </Button>
+                        <div>
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="flex w-full justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+                            >
+                                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                {loading ? 'Signing in...' : 'Sign In'}
+                            </button>
+                        </div>
                     </form>
+                </div>
 
-                    <div className="mt-8 text-center">
-                        <p className="text-xs text-muted-foreground">
-                            System Access is restricted. <br /> Contact Administrator for support.
-                        </p>
-                    </div>
-                </CardContent>
-            </Card>
+                <div className="mt-8 text-center text-xs text-slate-400">
+                    <p>© 2026 LPG Management System. All rights reserved.</p>
+                </div>
+            </div>
         </div>
     );
 }

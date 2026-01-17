@@ -232,17 +232,18 @@ export async function sendToPlant(quantity: number) {
 
     if (authError || !user || !tenantId) return { error: "Unauthorized" };
 
-    // 2. Fetch oldest 'empty' cylinders (Double-Lock)
+    // 2. Fetch oldest 'empty' cylinders (Double-Lock + Warehouse Check)
     const { data: cylinders, error: fetchError } = await supabase
         .from("cylinders")
         .select("id")
         .eq("tenant_id", tenantId)
         .eq("status", "empty")
+        .eq("current_location_type", "warehouse") // <--- STRICT SECURITY
         .order("created_at", { ascending: true }) // Oldest first
         .limit(quantity);
 
     if (fetchError) return { error: fetchError.message };
-    if (!cylinders || cylinders.length === 0) return { error: "No empty cylinders found to send." };
+    if (!cylinders || cylinders.length === 0) return { error: "No empty cylinders found in Warehouse to send." };
 
     const ids2Update = cylinders.map(c => c.id);
 
@@ -282,10 +283,14 @@ export async function receiveFromPlant(quantity: number) {
 
     const ids2Update = cylinders.map(c => c.id);
 
-    // 3. Update Status
+    // 3. Update Status (Reset Location to Warehouse)
     const { error: updateError } = await supabase
         .from("cylinders")
-        .update({ status: "full" })
+        .update({
+            status: "full",
+            current_location_type: 'warehouse', // <--- STRICT RESET
+            current_holder_id: null
+        })
         .in("id", ids2Update)
         .eq("tenant_id", tenantId);
 
