@@ -96,7 +96,6 @@ export async function createEmployee(prevState: any, formData: FormData) {
                 name: name,
                 role: role,
                 tenant_id: tenantId,
-                phone: finalPhone,
                 phone_number: finalPhone,
                 shift: shift
             })
