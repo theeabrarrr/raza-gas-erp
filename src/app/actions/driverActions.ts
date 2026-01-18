@@ -559,3 +559,25 @@ export async function processHandover(formData: FormData) {
     revalidatePath('/driver');
     return { success: true };
 }
+
+// 9. GET DRIVER PROFILE
+export async function getDriverProfile() {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) return null;
+
+    // Fetch from 'profiles' table as per instruction
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+
+    if (error) {
+        console.error("Fetch Profile Error:", error);
+        return null;
+    }
+
+    return data;
+}

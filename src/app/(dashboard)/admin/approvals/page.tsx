@@ -3,19 +3,15 @@
 import { useState, useEffect } from 'react';
 import { getPendingHandovers, approveHandover, rejectHandover, getPendingCylinderDetails } from '@/app/actions/adminActions';
 import { toast } from 'sonner';
-import { CheckCircle, XCircle, RefreshCw, User, DollarSign, Package, AlertTriangle, ArrowRight } from 'lucide-react';
+import { CheckCircle, XCircle, RefreshCw, DollarSign, Package, AlertTriangle, ArrowRight } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
-type Tab = 'empties' | 'cash' | 'requests';
-
 export default function ApprovalsPage() {
-    const [activeTab, setActiveTab] = useState<Tab>('empties');
     const [requests, setRequests] = useState<any[]>([]);
     const [pendingCylinders, setPendingCylinders] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [processing, setProcessing] = useState<string | null>(null);
-    const [editValues, setEditValues] = useState<Record<string, number>>({});
-    const [confirmModal, setConfirmModal] = useState<{ id: string, type: 'cash' | 'assets' | 'reject', qty?: number, msg: string } | null>(null);
+    const [confirmModal, setConfirmModal] = useState<{ id: string, type: 'approve' | 'reject', qty?: number, msg: string } | null>(null);
 
     useEffect(() => {
         loadRequests();
@@ -32,191 +28,43 @@ export default function ApprovalsPage() {
         setLoading(false);
     };
 
-    const handleApprove = (id: string, type: 'cash' | 'assets') => {
-        let actualQty = undefined;
-        let msg = "";
-
-        if (type === 'assets') {
-            const req = requests.find(r => (r.transaction_id || r.id) === id);
-            const claimed = req?.description ? parseInt(req.description.match(/(\d+) Cylinders/)?.[1] || '0') : 0;
-            const edited = editValues[id];
-            actualQty = edited !== undefined ? edited : claimed;
-            msg = `Confirm return of ${actualQty} Cylinders?` + (actualQty < claimed ? ` (${claimed - actualQty} will be marked MISSING/LOST)` : '');
-        } else {
-            msg = "Confirm Cash Receipt? This will verify the driver's deposit.";
-        }
-
-        setConfirmModal({ id, type, qty: actualQty, msg });
+    const handleApprove = (req: any) => {
+        const cyls = pendingCylinders.filter(c => c.current_holder_id === req.user_id);
+        const msg = `Confirm Handover Approval?\n\nCash: Rs ${req.amount}\nCylinders: ${cyls.length}`;
+        setConfirmModal({ id: req.transaction_id || req.id, type: 'approve', msg });
     };
 
     const handleReject = (id: string) => {
-        setConfirmModal({ id, type: 'reject', msg: "Reject Request? Items will remain with driver." });
+        setConfirmModal({ id, type: 'reject', msg: "Reject this handover request? Items will remain with the driver." });
     };
 
     const executeAction = async () => {
         if (!confirmModal) return;
-        const { id, type, qty } = confirmModal;
+        const { id, type } = confirmModal;
 
-        setProcessing(id); // Use this to show loading on modal button if needed
+        setProcessing(id);
         let res;
 
         if (type === 'reject') {
             res = await rejectHandover(id);
         } else {
-            res = await approveHandover(id, qty);
+            res = await approveHandover(id);
         }
 
-        setConfirmModal(null); // Close modal logic first or after? Let's close after result to show success/error logic? 
-        // User wants modal. Let's close modal immediately so we can show Toast.
+        setConfirmModal(null);
 
         if (res?.error) {
-            // Smart Error Handling
             if (res.error.includes("not found") || res.error.toLowerCase().includes("processed")) {
                 toast.info("Request was already processed.");
-                loadRequests(); // Refresh list to remove stale item
+                loadRequests();
             } else {
                 toast.error(res.error);
             }
         } else {
-            toast.success(type === 'reject' ? "Request Rejected" : "Inventory Updated Successfully");
+            toast.success(type === 'reject' ? "Request Rejected" : "Handover Approved Successfully");
             loadRequests();
         }
         setProcessing(null);
-    };
-
-    // Filter Logic
-    const cashRequests = requests.filter(r => r.amount > 0);
-    const assetRequests = requests.filter(r => {
-        // Condition: Has pending cylinders OR specifically mentions cylinders with amount 0
-        const hasPendingCylinders = pendingCylinders.some(c => c.current_holder_id === r.user_id);
-        const mentionsCylinders = r.description && r.description.includes('Cylinders') && parseInt(r.description.match(/(\d+) Cylinders/)?.[1] || '0') > 0;
-        return hasPendingCylinders || mentionsCylinders;
-    });
-    const otherRequests = requests.filter(r => false); // Placeholder
-
-    const renderTabContent = () => {
-        if (loading) return (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 animate-pulse">
-                {[1, 2, 3].map(i => <div key={i} className="h-48 bg-slate-100 rounded-2xl" />)}
-            </div>
-        );
-
-        let data = activeTab === 'cash' ? cashRequests : assetRequests;
-        if (activeTab === 'requests') data = otherRequests;
-
-        if (data.length === 0) return (
-            <div className="text-center py-24 bg-white rounded-3xl border-2 border-dashed border-slate-100">
-                <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
-                    {activeTab === 'cash' ? <DollarSign size={32} /> : <Package size={32} />}
-                </div>
-                <h3 className="text-lg font-bold text-slate-800">No Pending {activeTab === 'cash' ? 'Cash' : activeTab === 'requests' ? 'Stock Requests' : 'Returns'}</h3>
-                <p className="text-slate-400">Drivers are clear.</p>
-            </div>
-        );
-
-        return (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {data.map((req, idx) => {
-                    const reqId = req.transaction_id || req.id;
-                    const driverName = req.driver_name || req.users?.name || 'Unknown Driver';
-                    const driverCylinders = pendingCylinders.filter(c => c.current_holder_id === req.user_id);
-
-                    return (
-                        <div key={reqId || idx} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative overflow-hidden flex flex-col justify-between">
-                            <div>
-                                <div className="flex justify-between items-start mb-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 border border-slate-200 font-bold max-sm:hidden">
-                                            {driverName[0]}
-                                        </div>
-                                        <div>
-                                            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Driver</p>
-                                            <p className="font-bold text-slate-800">{driverName}</p>
-                                        </div>
-                                    </div>
-                                    <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-full border border-slate-100">
-                                        {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
-                                    </span>
-                                </div>
-
-                                <div className="space-y-3 mb-6">
-                                    {activeTab === 'cash' && (
-                                        <div className="flex justify-between items-center p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-                                            <div className="flex items-center gap-2 text-emerald-700 text-sm font-bold">
-                                                <DollarSign size={18} /> Cash Deposit
-                                            </div>
-                                            <span className="font-black text-xl text-emerald-800">Rs {req.amount?.toLocaleString()}</span>
-                                        </div>
-                                    )}
-
-                                    {activeTab === 'empties' && (
-                                        <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
-                                            <div className="flex items-between w-full mb-3">
-                                                <div className="flex items-center gap-2 text-amber-700 text-sm font-bold">
-                                                    <Package size={18} /> Assets
-                                                </div>
-                                                <span className="ml-auto text-xs font-bold bg-white px-2 py-1 rounded border border-amber-200 text-amber-600">
-                                                    {driverCylinders.length} Pending
-                                                </span>
-                                            </div>
-
-                                            {/* Serial Numbers Display */}
-                                            <div className="flex flex-wrap gap-1 mb-3 max-h-24 overflow-y-auto">
-                                                {driverCylinders.length > 0 ? driverCylinders.map((c: any, i: number) => (
-                                                    <span key={c.id || i} className="text-[10px] font-bold bg-white border border-amber-200 text-slate-600 px-1.5 py-0.5 rounded">
-                                                        {c.serial_number}
-                                                    </span>
-                                                )) : (
-                                                    <span className="text-xs text-slate-400 italic">No specific serials logged.</span>
-                                                )}
-                                            </div>
-
-                                            <p className="text-xs text-slate-500 mb-2 border-t border-amber-200 pt-2">
-                                                <span className="font-bold">Claimed:</span> {req.description}
-                                            </p>
-
-                                            {/* Edit Qty Input */}
-                                            <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-amber-200">
-                                                <label className="text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">Approved Qty:</label>
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    className="w-full font-bold text-slate-900 outline-none text-sm"
-                                                    placeholder={driverCylinders.length.toString()}
-                                                    value={editValues[reqId] ?? ''}
-                                                    onChange={(e) => setEditValues({ ...editValues, [reqId]: parseInt(e.target.value) })}
-                                                />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="flex gap-2 pt-4 border-t border-slate-50">
-                                <button
-                                    onClick={() => handleReject(reqId)}
-                                    disabled={!!processing}
-                                    className="flex-1 py-2 bg-white border border-red-100 text-red-600 rounded-lg font-bold text-sm hover:bg-red-50 transition-colors disabled:opacity-50"
-                                >
-                                    {processing === reqId ? <RefreshCw className="animate-spin mx-auto" size={16} /> : 'Reject'}
-                                </button>
-                                <button
-                                    onClick={() => handleApprove(reqId, activeTab === 'cash' ? 'cash' : 'assets')}
-                                    disabled={!!processing}
-                                    className="flex-[2] py-2 bg-slate-900 text-white rounded-lg font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10 disabled:opacity-50 flex items-center justify-center gap-2"
-                                >
-                                    {processing === reqId ? (
-                                        <><RefreshCw className="animate-spin" size={16} /> Approving...</>
-                                    ) : (
-                                        <><CheckCircle size={16} /> Approve</>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
-                    )
-                })}
-            </div>
-        );
     };
 
     return (
@@ -234,47 +82,115 @@ export default function ApprovalsPage() {
                 </button>
             </header>
 
-            {/* Tabs */}
-            <div className="border-b border-slate-200">
-                <nav className="flex gap-8" aria-label="Tabs">
-                    <button
-                        onClick={() => setActiveTab('empties')}
-                        className={`py-4 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${activeTab === 'empties'
-                            ? 'border-emerald-500 text-emerald-600'
-                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
-                    >
-                        <Package size={18} />
-                        Empties Return
-                        {assetRequests.length > 0 && <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-[10px]">{assetRequests.length}</span>}
-                    </button>
-
-                    <button
-                        onClick={() => setActiveTab('cash')}
-                        className={`py-4 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${activeTab === 'cash'
-                            ? 'border-emerald-500 text-emerald-600'
-                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
-                    >
-                        <DollarSign size={18} />
-                        Cash Handover
-                        {cashRequests.length > 0 && <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full text-[10px]">{cashRequests.length}</span>}
-                    </button>
-
-                    <button
-                        onClick={() => setActiveTab('requests')}
-                        className={`py-4 text-sm font-bold border-b-2 transition-all flex items-center gap-2 ${activeTab === 'requests'
-                            ? 'border-emerald-500 text-emerald-600'
-                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
-                    >
-                        <AlertTriangle size={18} />
-                        Stock Requests
-                    </button>
-                </nav>
-            </div>
-
-            {/* Content */}
+            {/* Content using Standard Grid */}
             <main className="min-h-[400px]">
-                {renderTabContent()}
+                {loading && (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 animate-pulse">
+                        {[1, 2, 3].map(i => <div key={i} className="h-48 bg-slate-100 rounded-2xl" />)}
+                    </div>
+                )}
+
+                {!loading && requests.length === 0 && (
+                    <div className="text-center py-24 bg-white rounded-3xl border-2 border-dashed border-slate-100">
+                        <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4 text-slate-300">
+                            <CheckCircle size={32} />
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-800">No Pending Requests</h3>
+                        <p className="text-slate-400">All driver handovers cleared.</p>
+                    </div>
+                )}
+
+                {!loading && requests.length > 0 && (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        {requests.map((req, idx) => {
+                            const reqId = req.transaction_id || req.id;
+                            const driverName = req.driver_name || req.users?.name || 'Unknown Driver';
+                            const driverCylinders = pendingCylinders.filter(c => c.current_holder_id === req.user_id);
+
+                            return (
+                                <div key={reqId || idx} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow flex flex-col justify-between">
+                                    <div>
+                                        <div className="flex justify-between items-start mb-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 border border-slate-200 font-bold">
+                                                    {driverName[0]}
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Driver</p>
+                                                    <p className="font-bold text-slate-800">{driverName}</p>
+                                                </div>
+                                            </div>
+                                            <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-full border border-slate-100">
+                                                {formatDistanceToNow(new Date(req.created_at), { addSuffix: true })}
+                                            </span>
+                                        </div>
+
+                                        {/* UNIFIED DETAILS CARD */}
+                                        <div className="space-y-3 mb-6">
+                                            {/* CASH */}
+                                            {req.amount > 0 && (
+                                                <div className="flex justify-between items-center p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                                                    <div className="flex items-center gap-2 text-emerald-700 text-sm font-bold">
+                                                        <DollarSign size={16} /> Cash
+                                                    </div>
+                                                    <span className="font-black text-lg text-emerald-800">Rs {req.amount.toLocaleString()}</span>
+                                                </div>
+                                            )}
+
+                                            {/* ASSETS */}
+                                            {driverCylinders.length > 0 && (
+                                                <div className="p-3 bg-amber-50 rounded-xl border border-amber-100">
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <div className="flex items-center gap-2 text-amber-700 text-sm font-bold">
+                                                            <Package size={16} /> Cylinders
+                                                        </div>
+                                                        <span className="text-xs font-bold bg-white px-2 py-0.5 rounded border border-amber-200 text-amber-600">
+                                                            {driverCylinders.length} Returns
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {driverCylinders.map((c: any) => (
+                                                            <span key={c.id} className="text-[10px] font-bold bg-white border border-amber-200 text-slate-500 px-1 rounded">
+                                                                {c.serial_number}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Fallback for Empty Request */}
+                                            {req.amount === 0 && driverCylinders.length === 0 && (
+                                                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 text-center">
+                                                    <p className="text-xs text-slate-400 italic">No cash or assets detected.</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* ACTIONS */}
+                                    <div className="flex gap-2 pt-4 border-t border-slate-50">
+                                        <button
+                                            onClick={() => handleReject(reqId)}
+                                            disabled={!!processing}
+                                            className="flex-1 py-2 bg-white border border-red-100 text-red-600 rounded-lg font-bold text-sm hover:bg-red-50 transition-colors disabled:opacity-50"
+                                        >
+                                            Reject
+                                        </button>
+                                        <button
+                                            onClick={() => handleApprove(req)}
+                                            disabled={!!processing}
+                                            className="flex-[2] py-2 bg-slate-900 text-white rounded-lg font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-900/10 disabled:opacity-50 flex items-center justify-center gap-2"
+                                        >
+                                            {processing === reqId ? <RefreshCw className="animate-spin" size={16} /> : 'Approve Handover'}
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </main>
+
             {/* Confirmation Modal */}
             {confirmModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
@@ -284,9 +200,9 @@ export default function ApprovalsPage() {
                                 {confirmModal.type === 'reject' ? <XCircle size={32} /> : <CheckCircle size={32} />}
                             </div>
                             <h3 className="text-xl font-bold text-slate-800">
-                                {confirmModal.type === 'reject' ? 'Reject Request' : 'Confirm Approval'}
+                                {confirmModal.type === 'reject' ? 'Reject Handover' : 'Approve Handover'}
                             </h3>
-                            <p className="text-slate-500 font-medium">
+                            <p className="text-slate-500 font-medium whitespace-pre-wrap">
                                 {confirmModal.msg}
                             </p>
 

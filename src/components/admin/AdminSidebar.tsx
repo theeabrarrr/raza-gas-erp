@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Cylinder, Users, Settings, LogOut, Briefcase, ShoppingCart, Database, CheckSquare, ClipboardList } from "lucide-react";
+import { LayoutDashboard, Cylinder, Users, Settings, LogOut, Briefcase, ShoppingCart, Database, CheckSquare, ClipboardList, Landmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 import LogoutBtn from "@/components/LogoutBtn";
 
@@ -13,6 +13,7 @@ const navItems = [
     { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
     { href: '/admin/cylinders', label: 'Inventory', icon: Database },
     { href: "/admin/approvals", label: "Approvals", icon: CheckSquare },
+    { href: "/admin/finance", label: "Finance", icon: Landmark },
     { href: "/admin/expenses", label: "Expenses", icon: ClipboardList }, // Added Expenses
     { href: "/admin/customers", label: "Customer CRM", icon: Users },
     { href: "/admin/users", label: "Staff", icon: Briefcase },

@@ -300,3 +300,50 @@ export async function receiveFromPlant(quantity: number) {
     revalidatePath("/admin/cylinders");
     return { success: true, count: ids2Update.length };
 }
+
+
+// 6. UPDATE CYLINDER (Rename / Edit)
+export async function updateCylinder(id: string, newSerial: string) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    const tenantId = user?.app_metadata?.tenant_id;
+
+    if (!tenantId) return { error: "Unauthorized" };
+
+    const { error } = await supabase
+        .from('cylinders')
+        .update({ serial_number: newSerial })
+        .eq('id', id)
+        .eq('tenant_id', tenantId);
+
+    if (error) {
+        console.error("Update Serial Error:", error);
+        return { error: error.message };
+    }
+
+    revalidatePath("/admin/cylinders");
+    return { success: true };
+}
+
+// 7. DELETE CYLINDER
+export async function deleteCylinder(id: string) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    const tenantId = user?.app_metadata?.tenant_id;
+
+    if (!tenantId) return { error: "Unauthorized" };
+
+    const { error } = await supabase
+        .from('cylinders')
+        .delete()
+        .eq('id', id)
+        .eq('tenant_id', tenantId);
+
+    if (error) {
+        console.error("Delete Cylinder Error:", error);
+        return { error: error.message };
+    }
+
+    revalidatePath("/admin/cylinders");
+    return { success: true };
+}

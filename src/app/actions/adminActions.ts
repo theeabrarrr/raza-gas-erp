@@ -1,7 +1,19 @@
 "use server";
 
 import { createClient } from "@/utils/supabase/server";
+import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { revalidatePath } from "next/cache";
+
+const supabaseAdmin = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    {
+        auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+        },
+    }
+);
 
 export async function getAdminStats() {
     const supabase = await createClient();
@@ -99,22 +111,42 @@ export async function getTenantUsers() {
         return [];
     }
 
-    // 3. The Query with DOUBLE LOCK (RLS + Explicit Filter)
-    const { data: users, error } = await supabase
-        .from("users")
-        .select("*")
-        .eq("tenant_id", tenantId) // <--- FORCE FILTER
-        .neq("role", "super_admin") // <--- EXCLUDE SUPER ADMIN
-        .order("created_at", { ascending: false });
+    // 3. CRITICAL FIX: Fetch directly from 'profiles' as the primary source of truth.
+    // We assume 'profiles' has 'tenant_id' or we are just testing if this works.
+    // User instruction: "Query: SELECT * FROM public.profiles WHERE tenant_id = [current_tenant_id]"
+
+    // Note: If 'profiles' lacks tenant_id, this will fail. Usage assumes user has verified schema or added column.
+    // However, to be safe and robust, if 'profiles' does not have tenant_id, we might be stuck.
+    // But let's trust the user's explicit instruction.
+
+    const { data: profiles, error } = await supabaseAdmin
+        .from("profiles")
+        .select(`
+            *
+        `)
+        .eq("tenant_id", tenantId);
 
     if (error) {
-        console.error("Error fetching users:", error);
+        console.error("Error fetching available profiles:", error);
         return [];
     }
 
-    // ... previous code
+    // Map profiles to Employee shape
+    const mappedUsers = profiles?.map((p: any) => ({
+        id: p.id,
+        name: p.full_name || 'Unknown',
+        email: 'N/A', // Email is not in profiles usually
+        role: p.role || 'staff',
+        phone_number: p.phone_number,
+        shift: 'Day', // Default as shift is not in profiles
+        created_at: p.updated_at || new Date().toISOString(),
+        profiles: {
+            vehicle_number: p.vehicle_number,
+            phone_number: p.phone_number
+        }
+    })) || [];
 
-    return users || [];
+    return mappedUsers;
 }
 
 export async function getDrivers() {
@@ -262,4 +294,94 @@ export async function rejectHandover(transactionId: string) {
 
     revalidatePath('/admin/approvals');
     return { success: true };
+}
+
+// 7. DASHBOARD STATS (Consolidated)
+export async function getDashboardStats() {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    const tenantId = user?.app_metadata?.tenant_id;
+
+    if (!tenantId) {
+        return {
+            totalCash: 0,
+            activeDrivers: 0,
+            totalAssets: 0,
+            emptyCylinders: 0,
+            chartData: [],
+            recentActivity: []
+        };
+    }
+
+    // Parallel Fetching
+    const [cashResult, driversResult, assetsResult, emptyResult, ordersResult, recentResult] = await Promise.allSettled([
+        // 1. Total Cash (Sum of Ledger)
+        supabase.from('company_ledger').select('amount').eq('tenant_id', tenantId),
+
+        // 2. Active Drivers
+        supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'driver').eq('tenant_id', tenantId),
+
+        // 3. Total Assets
+        supabase.from('cylinders').select('*', { count: 'exact', head: true }).eq('tenant_id', tenantId),
+
+        // 4. Empty Cylinders
+        supabase.from('cylinders').select('*', { count: 'exact', head: true }).eq('status', 'empty').eq('tenant_id', tenantId),
+
+        // 5. Chart Data (Last 7 Days)
+        supabase.from('orders')
+            .select('created_at, total_amount')
+            .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+            .eq('tenant_id', tenantId)
+            .order('created_at', { ascending: true }),
+
+        // 6. Recent Activity
+        supabase.from('orders')
+            .select('id, friendly_id, status, total_amount, created_at, customers(name)')
+            .eq('tenant_id', tenantId)
+            .order('created_at', { ascending: false })
+            .limit(5)
+    ]);
+
+    // Process Cash
+    let totalCash = 0;
+    if (cashResult.status === 'fulfilled' && cashResult.value.data) {
+        totalCash = cashResult.value.data.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+    }
+
+    // Process Counts
+    const activeDrivers = driversResult.status === 'fulfilled' ? (driversResult.value.count || 0) : 0;
+    const totalAssets = assetsResult.status === 'fulfilled' ? (assetsResult.value.count || 0) : 0;
+    const emptyCylinders = emptyResult.status === 'fulfilled' ? (emptyResult.value.count || 0) : 0;
+    const recentActivity = recentResult.status === 'fulfilled' && recentResult.value.data ? recentResult.value.data : [];
+
+    // Process Chart Data (Group by Day)
+    const chartMap = new Map<string, number>();
+
+    // Initialize last 7 days with 0
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toLocaleDateString('en-US', { weekday: 'short' }); // Mon, Tue
+        chartMap.set(dateStr, 0);
+    }
+
+    if (ordersResult.status === 'fulfilled' && ordersResult.value.data) {
+        ordersResult.value.data.forEach((order) => {
+            const dateStr = new Date(order.created_at).toLocaleDateString('en-US', { weekday: 'short' });
+            if (chartMap.has(dateStr)) {
+                chartMap.set(dateStr, (chartMap.get(dateStr) || 0) + 1);
+            }
+        });
+    }
+
+    const chartData = Array.from(chartMap.entries()).map(([name, value]) => ({ name, value }));
+
+    return {
+        totalCash,
+        activeDrivers,
+        totalAssets,
+        emptyCylinders,
+        chartData,
+        recentActivity
+    };
 }

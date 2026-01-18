@@ -20,45 +20,71 @@ export async function updateUser(prevState: any, formData: FormData) {
     const role = formData.get('role') as string;
     const shift = formData.get('shift') as string;
     const phone = formData.get('phone') as string;
+    const vehicleNumber = formData.get('vehicle_number') as string;
 
     if (!id || !name || !role) {
         return { error: 'Missing required fields' };
     }
 
     try {
+        // 0. Fetch User to get Tenant ID (Critical for Profile Upsert)
+        const { data: existingUser, error: fetchError } = await supabaseAdmin.auth.admin.getUserById(id);
+        if (fetchError || !existingUser?.user) throw new Error("User not found for update");
+
+        const tenantId = existingUser.user.user_metadata?.tenant_id || existingUser.user.app_metadata?.tenant_id;
+
         // 1. Update Auth Metadata
         const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(id, {
             user_metadata: {
                 name: name,
                 role: role,
                 shift: shift,
-                phone_number: phone
+                phone_number: phone,
+                vehicle_number: vehicleNumber,
+                tenant_id: tenantId // Ensure persistence
             }
         });
         if (authError) throw authError;
 
         // 2. Update Public Table (Manual Sync to be safe)
-        // We explicitly update 'shift' and 'phone' as well globally to ensure public.users is in sync.
         const { error: dbError } = await supabaseAdmin
             .from('users')
             .update({
                 name: name,
                 role: role,
-                shift: shift, // Now explicitly updating shift
+                shift: shift,
                 phone_number: phone
             })
             .eq('id', id);
 
         if (dbError) {
-            console.error('Error syncing to public.users:', dbError);
-            // We don't throw here to avoid failing the whole request if Auth succeeded, 
-            // but for this user's strict requirement, we perhaps should or at least return a warning?
-            // User asked: "Check karo ke agar metadata update success ho jaye par database update fail ho, toh error show hona chahiye."
-            // So we MUST return an error or at least a warning.
             throw new Error(`Auth updated but DB sync failed: ${dbError.message}`);
         }
 
+        // 3. Update Profiles Table (Vehicle & Phone) WITH Tenant ID
+        const profileData: any = {
+            id: id,
+            full_name: name,
+            role: role,
+            phone_number: phone,
+            vehicle_number: vehicleNumber,
+            updated_at: new Date().toISOString()
+        };
+
+        // Only add tenant_id if found, otherwise rely on existing or default
+        if (tenantId) profileData.tenant_id = tenantId;
+
+        const { error: profileError } = await supabaseAdmin
+            .from('profiles')
+            .upsert(profileData);
+
+        if (profileError) {
+            console.error("Profile Update Error:", profileError);
+            throw new Error(`Profile update failed: ${profileError.message}`);
+        }
+
         revalidatePath('/admin/users');
+        revalidatePath('/driver/profile'); // Ensure driver sees it too
         return { success: true, message: 'User updated successfully' };
     } catch (error: any) {
         return { error: error.message };
