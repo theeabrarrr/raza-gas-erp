@@ -339,19 +339,25 @@ export async function completeDelivery(formData: FormData) {
 
 
 // 4. GET MY COMPLETED ORDERS (History)
-export async function getCompletedOrders() {
+export async function getCompletedOrders(dateString?: string) {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return [];
     const tenantId = user.app_metadata?.tenant_id;
 
+    // Determine Date Range
+    const targetDate = dateString ? new Date(dateString) : new Date();
+    const startOfDay = new Date(targetDate.setHours(0, 0, 0, 0)).toISOString();
+    const endOfDay = new Date(targetDate.setHours(23, 59, 59, 999)).toISOString();
+
     const { data } = await supabase
         .from('orders')
-        .select('id, friendly_id, total_amount, created_at, customers(name)')
+        .select('id, friendly_id, total_amount, amount_received, payment_method, created_at, customers(name)')
         .eq('driver_id', user.id)
         .eq('status', 'delivered')
         .eq('tenant_id', tenantId)
-        .gte('created_at', new Date().setHours(0, 0, 0, 0)) // Today only
+        .gte('created_at', startOfDay)
+        .lte('created_at', endOfDay)
         .order('created_at', { ascending: false });
 
     return data || [];

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   User, Bell, Wallet, Truck, Package, Receipt, LogOut,
-  RefreshCw, ChevronRight, MapPin, Check, X, Info, Home
+  RefreshCw, ChevronRight, MapPin, Check, X, Info, Home, ArrowRightLeft
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
@@ -132,7 +132,7 @@ export default function DriverDashboard() {
         p_driver_id: user.id,
         p_receiver_id: selectedReceiver,
         p_cash_amount: deposit,
-        p_cylinders: selectedHandoverAssets // Array of Serial Numbers
+        p_cylinder_ids: selectedHandoverAssets // Array of UUIDs
       });
 
       if (error) throw error;
@@ -153,11 +153,11 @@ export default function DriverDashboard() {
   };
 
   // Helper to toggle assets in modal
-  const toggleAsset = (serial: string) => {
-    if (selectedHandoverAssets.includes(serial)) {
-      setSelectedHandoverAssets(selectedHandoverAssets.filter(s => s !== serial));
+  const toggleAsset = (id: string) => {
+    if (selectedHandoverAssets.includes(id)) {
+      setSelectedHandoverAssets(selectedHandoverAssets.filter(s => s !== id));
     } else {
-      setSelectedHandoverAssets([...selectedHandoverAssets, serial]);
+      setSelectedHandoverAssets([...selectedHandoverAssets, id]);
     }
   };
 
@@ -270,14 +270,14 @@ export default function DriverDashboard() {
           {/* 4. End Shift */}
           <button
             onClick={openHandover}
-            className="bg-white p-5 rounded-2xl shadow-sm border-2 border-rose-100 flex flex-col items-start gap-3 active:scale-[98%] transition-transform"
+            className="bg-white p-5 rounded-2xl shadow-sm border-2 border-indigo-100 flex flex-col items-start gap-3 active:scale-[98%] transition-transform"
           >
-            <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center">
-              <LogOut size={22} />
+            <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+              <ArrowRightLeft size={22} />
             </div>
             <div className="text-left">
-              <h3 className="font-bold text-slate-800">End Shift</h3>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">Handover</p>
+              <h3 className="font-bold text-slate-800">Deposit Assets</h3>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">Handover Cash/Stock</p>
             </div>
           </button>
         </div>
@@ -357,8 +357,8 @@ export default function DriverDashboard() {
             {/* Header */}
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 rounded-t-3xl">
               <div>
-                <h3 className="text-xl font-black text-slate-900">End Shift Handover</h3>
-                <p className="text-xs text-slate-500 font-medium">Return Cash & Assets to Admin</p>
+                <h3 className="text-xl font-black text-slate-900">Deposit Assets to Warehouse</h3>
+                <p className="text-xs text-slate-500 font-medium">Select Cash & Cylinders to return.</p>
               </div>
               <button onClick={() => setShowHandoverModal(false)} className="p-2 bg-white border border-slate-200 rounded-full text-slate-500 hover:bg-slate-50">
                 <X size={20} />
@@ -408,12 +408,12 @@ export default function DriverDashboard() {
                     driverAssets.map(asset => (
                       <button
                         key={asset.id}
-                        onClick={() => toggleAsset(asset.serial_number)}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${selectedHandoverAssets.includes(asset.serial_number) ? 'bg-white border-emerald-500 shadow-sm ring-1 ring-emerald-500' : 'bg-white border-slate-200 opacity-80'}`}
+                        onClick={() => toggleAsset(asset.id)} // Use ID
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${selectedHandoverAssets.includes(asset.id) ? 'bg-white border-emerald-500 shadow-sm ring-1 ring-emerald-500' : 'bg-white border-slate-200 opacity-80'}`}
                       >
                         <div className="flex items-center gap-3">
-                          <div className={`w-5 h-5 rounded flex items-center justify-center border ${selectedHandoverAssets.includes(asset.serial_number) ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'}`}>
-                            {selectedHandoverAssets.includes(asset.serial_number) && <Check size={14} />}
+                          <div className={`w-5 h-5 rounded flex items-center justify-center border ${selectedHandoverAssets.includes(asset.id) ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'}`}>
+                            {selectedHandoverAssets.includes(asset.id) && <Check size={14} />}
                           </div>
                           <div className="text-left">
                             <span className="block text-sm font-bold text-slate-800">{asset.serial_number}</span>
