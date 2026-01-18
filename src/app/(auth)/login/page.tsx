@@ -38,7 +38,7 @@ export default function LoginPage() {
             const { data: profile, error: profileError } = await supabase
                 .from('users')
                 .select('*')
-                .eq('id', user.id)
+                .eq('auth_id', user.id)
                 .maybeSingle();
 
             if (profileError) {
@@ -63,6 +63,7 @@ export default function LoginPage() {
             // Redirect
             if (role === 'admin') router.push('/admin');
             else if (role === 'driver') router.push('/driver');
+            else if (role === 'recovery') router.push('/recovery');
             else router.push('/');
 
         } catch (error: any) {
