@@ -5,11 +5,46 @@
 -- 2. Updates 'process_trip_returns' to handle explicit return items.
 -- 3. Adds 'verification_status' to 'company_ledger'.
 
+
+-- 0. SECURITY FIX: Permission Denied on get_my_tenant_id
+-- We redefine this function to remove ', auth' 
+-- which caused failures when called by RLS policies.
+CREATE OR REPLACE FUNCTION public.get_my_tenant_id()
+RETURNS UUID
+LANGUAGE sql
+SET search_path = public
+
+AS $$
+  SELECT tenant_id FROM public.users WHERE id = auth.uid();
+$$;
+
 -- 1. SECURITY: Revert Cylinders RLS to Iron Dome
--- Drop permissive policies
+-- Drop permissive policies and legacy zombie policies
 DROP POLICY IF EXISTS "Enable read access for all users" ON cylinders;
 DROP POLICY IF EXISTS "Enable insert access for all users" ON cylinders;
 DROP POLICY IF EXISTS "Enable update access for all users" ON cylinders;
+DROP POLICY IF EXISTS "Admins can update cylinders" ON cylinders;
+DROP POLICY IF EXISTS "Allow auth select all" ON cylinders;
+DROP POLICY IF EXISTS "Cylinder Isolation" ON cylinders;
+DROP POLICY IF EXISTS "Drivers can update their own cylinders" ON cylinders;
+DROP POLICY IF EXISTS "Drivers can view their own cylinders" ON cylinders;
+DROP POLICY IF EXISTS "Public_Full_Access" ON cylinders;
+DROP POLICY IF EXISTS "Tenant Isolation Cylinders" ON cylinders;
+
+-- Cleanup Zombies on Orders & Trips (Fixes 'permission denied' during Join validation)
+DROP POLICY IF EXISTS "Allow auth select all" ON orders;
+DROP POLICY IF EXISTS "Enable all access for all users" ON orders;
+DROP POLICY IF EXISTS "Enable read access for tenant users" ON orders;
+DROP POLICY IF EXISTS "Tenant Isolation Orders" ON orders;
+
+-- Fix Orders Isolation (Remove jwt() dependency)
+DROP POLICY IF EXISTS "Tenant Isolation" ON orders;
+CREATE POLICY "Tenant Isolation" ON orders
+    FOR ALL
+    USING (tenant_id = public.get_my_tenant_id());
+
+DROP POLICY IF EXISTS "Allow auth select all" ON trips;
+DROP POLICY IF EXISTS "Auto read policy" ON trips;
 
 -- Re-apply strict tenant isolation
 DROP POLICY IF EXISTS "Tenant Isolation" ON cylinders;
@@ -26,7 +61,7 @@ RETURNS TABLE (
     current_status TEXT
 )
 LANGUAGE plpgsql
-SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
     RETURN QUERY
@@ -60,7 +95,7 @@ CREATE OR REPLACE FUNCTION process_trip_returns(
 )
 RETURNS JSONB
 LANGUAGE plpgsql
-SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
     v_item JSONB;
@@ -185,4 +220,4 @@ BEGIN
 
     RETURN new;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SET search_path = public;
