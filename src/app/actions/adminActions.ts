@@ -95,7 +95,7 @@ export async function getTenantInfo() {
 export async function getTenantUsers() {
     const supabase = await createClient();
 
-    // 1. Get Current User & Tenant ID from Session
+    // 1. Get Current User (Auth Check)
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
@@ -103,28 +103,12 @@ export async function getTenantUsers() {
         return [];
     }
 
-    // 2. CRITICAL: Get ID from metadata (The JWT Payload)
-    const tenantId = user.app_metadata?.tenant_id;
-
-    if (!tenantId) {
-        console.error("CRITICAL: Tenant ID missing from user metadata. Security Context Invalid.");
-        return [];
-    }
-
-    // 3. CRITICAL FIX: Fetch directly from 'profiles' as the primary source of truth.
-    // We assume 'profiles' has 'tenant_id' or we are just testing if this works.
-    // User instruction: "Query: SELECT * FROM public.profiles WHERE tenant_id = [current_tenant_id]"
-
-    // Note: If 'profiles' lacks tenant_id, this will fail. Usage assumes user has verified schema or added column.
-    // However, to be safe and robust, if 'profiles' does not have tenant_id, we might be stuck.
-    // But let's trust the user's explicit instruction.
-
-    const { data: profiles, error } = await supabaseAdmin
+    // 2. Verified Query using RLS
+    // We rely on the "Tenant Isolation" policy on 'profiles' to filter data automatically.
+    // If the policy is working, this returns only the profiles for the user's tenant.
+    const { data: profiles, error } = await supabase
         .from("profiles")
-        .select(`
-            *
-        `)
-        .eq("tenant_id", tenantId);
+        .select("*");
 
     if (error) {
         console.error("Error fetching available profiles:", error);

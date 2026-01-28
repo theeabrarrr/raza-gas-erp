@@ -18,7 +18,7 @@ export async function getDriverInventory() {
 
     const { data, error, count } = await supabase
         .from('cylinders')
-        .select('*', { count: 'exact' })
+        .select('id, serial_number, size, status, current_location_type', { count: 'exact' })
         .eq('current_holder_id', user.id)
         .eq('current_location_type', 'driver')
         .eq('status', 'full') // Only count full cylinders available for delivery
@@ -116,7 +116,7 @@ export async function completeDelivery(formData: FormData) {
     // A. FETCH ORDER DETAILS (Validation)
     const { data: order } = await supabase
         .from('orders')
-        .select('*, order_items(*)')
+        .select('id, friendly_id, total_amount, customer_id, tenant_id, order_items(quantity, product_name)')
         .eq('id', orderId)
         .eq('driver_id', user.id)
         .eq('tenant_id', tenantId)
@@ -402,7 +402,7 @@ export async function getDriverAllAssets() {
 
     const { data } = await supabase
         .from('cylinders')
-        .select('*')
+        .select('id, serial_number, size, status, current_location_type')
         .eq('current_holder_id', user.id)
         .eq('current_location_type', 'driver')
         .eq('tenant_id', tenantId)

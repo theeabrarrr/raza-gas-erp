@@ -12,10 +12,8 @@
 CREATE OR REPLACE FUNCTION public.get_my_tenant_id()
 RETURNS UUID
 LANGUAGE sql
-SET search_path = public
-
 AS $$
-  SELECT tenant_id FROM public.users WHERE id = auth.uid();
+  SELECT tenant_id FROM public.users WHERE id = (current_setting('request.jwt.claim.sub', true)::uuid);
 $$;
 
 -- 1. SECURITY: Revert Cylinders RLS to Iron Dome
@@ -61,7 +59,7 @@ RETURNS TABLE (
     current_status TEXT
 )
 LANGUAGE plpgsql
-SET search_path = public
+
 AS $$
 BEGIN
     RETURN QUERY
@@ -95,7 +93,7 @@ CREATE OR REPLACE FUNCTION process_trip_returns(
 )
 RETURNS JSONB
 LANGUAGE plpgsql
-SET search_path = public
+
 AS $$
 DECLARE
     v_item JSONB;
@@ -220,4 +218,4 @@ BEGIN
 
     RETURN new;
 END;
-$$ LANGUAGE plpgsql SET search_path = public;
+$$ LANGUAGE plpgsql;

@@ -31,14 +31,15 @@ export async function updateSession(request: NextRequest) {
         }
     )
 
-    // IMPORTANT: DO NOT REMOVE auth.getUser()
     const {
         data: { user },
         error: authError
     } = await supabase.auth.getUser()
 
-    if (authError) console.log("Middleware Auth Check:", authError.message);
+    if (authError && authError.message !== 'Auth session missing!') {
+        console.log("Middleware Auth Check:", authError.message);
+    }
 
-
+    // Return user to let middleware.ts handle redirects
     return { response, user, supabase }
 }

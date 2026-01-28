@@ -1,24 +1,35 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import QRCode from 'react-qr-code';
 import { X, Printer } from 'lucide-react';
+import { Dialog, DialogContent, DialogTrigger } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 
 interface QRCodeGeneratorProps {
     serialNumbers: string[];
-    tenantId: string; // We might need this, or we can just rely on the serial numbers if we assume we are the admin of the current tenant. 
-    // Actually, the prompt says "QR Data must match the format: tenant={tenant_id}&id={serial_number}".
-    // I need the tenant_id. I can pass it in, or I can fetch it. 
-    // Since this is a client component, passing it as a prop is cleaner.
+    tenantId: string;
     onClose: () => void;
 }
 
 export default function QRCodeGenerator({ serialNumbers, tenantId, onClose }: QRCodeGeneratorProps) {
+    const [isOpen, setIsOpen] = useState(true);
+
+    // Sync external open state if needed, but since it's mounted conditionally likely, we just default true.
+    // However, if the parent controls mounting, we can just render the Dialog open={true}.
+
     const handlePrint = () => {
         window.print();
     };
 
+    const handleOpenChange = (open: boolean) => {
+        setIsOpen(open);
+        if (!open) {
+            onClose();
+        }
+    }
+
     return (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[100] flex justify-center items-center overflow-y-auto p-4 print:p-0 print:bg-white print:absolute print:inset-0">
-            <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden print:shadow-none print:w-full print:max-w-none print:rounded-none">
+        <Dialog open={isOpen} onOpenChange={handleOpenChange}>
+            <DialogContent className="max-w-4xl p-0 overflow-hidden bg-white sm:rounded-2xl print:shadow-none print:w-full print:max-w-none print:rounded-none">
                 {/* Header - Hidden in Print */}
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center print:hidden">
                     <div>
@@ -26,23 +37,24 @@ export default function QRCodeGenerator({ serialNumbers, tenantId, onClose }: QR
                         <p className="text-sm text-slate-500 font-medium">Ready to print {serialNumbers.length} labels</p>
                     </div>
                     <div className="flex gap-3">
-                        <button
+                        <Button
                             onClick={handlePrint}
-                            className="bg-slate-900 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-slate-800 transition-colors"
+                            className="bg-slate-900 text-white font-bold gap-2 hover:bg-slate-800"
                         >
                             <Printer size={18} /> Print Labels
-                        </button>
-                        <button
-                            onClick={onClose}
-                            className="bg-slate-100 text-slate-600 px-4 py-2 rounded-lg font-bold hover:bg-slate-200 transition-colors"
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            onClick={() => handleOpenChange(false)}
+                            className="bg-slate-100 text-slate-600 font-bold hover:bg-slate-200"
                         >
                             <X size={18} />
-                        </button>
+                        </Button>
                     </div>
                 </div>
 
                 {/* Grid */}
-                <div className="p-8 print:p-0">
+                <div className="p-8 print:p-0 max-h-[80vh] overflow-y-auto print:max-h-none print:overflow-visible">
                     <div className="grid grid-cols-3 gap-8 print:grid-cols-3 print:gap-4">
                         {serialNumbers.map((serial) => (
                             <div key={serial} className="flex flex-col items-center justify-center p-4 border-2 border-slate-900 rounded-xl print:border-2 print:border-black print:break-inside-avoid">
@@ -61,7 +73,7 @@ export default function QRCodeGenerator({ serialNumbers, tenantId, onClose }: QR
                         ))}
                     </div>
                 </div>
-            </div>
-        </div>
+            </DialogContent>
+        </Dialog>
     );
 }
