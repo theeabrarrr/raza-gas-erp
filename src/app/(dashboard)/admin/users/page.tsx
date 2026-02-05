@@ -3,8 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { createEmployee } from '@/app/actions/createEmployee';
-import { updateUser, resetPassword, toggleUserStatus } from '@/app/actions/manageUser';
-import { getTenantUsers } from '@/app/actions/adminActions';
+import { updateUser, resetPassword, toggleUserStatus, getStaffUsers } from '@/app/actions/manageUser';
 import {
     Users, UserPlus, Search, Phone, Shield, Loader2, X,
     Briefcase, Truck, MoreVertical, Edit, Lock, Ban, MailIcon
@@ -72,8 +71,29 @@ export default function UsersPage() {
         try {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) setCurrentUserId(user.id);
-            const rawData = await getTenantUsers();
-            setEmployees(rawData);
+
+            const result = await getStaffUsers();
+
+            if (result.success && result.data) {
+                // Map the data to match Employee interface if needed, or rely on loose typing if compatible
+                // The data from getStaffUsers includes profiles join, which matches the interface expectation partially
+                // We ensure it matches the Employee state
+                const mapped: Employee[] = result.data.map((u: any) => ({
+                    id: u.id,
+                    name: u.name,
+                    role: u.role,
+                    email: u.email,
+                    phone: u.phone_number, // users table has phone_number
+                    phone_number: u.phone_number,
+                    shift: u.shift,
+                    created_at: u.created_at,
+                    profiles: u.profiles, // joined data
+                    raw_user_meta_data: u.raw_user_meta_data
+                }));
+                setEmployees(mapped);
+            } else {
+                toast.error(result.error || "Failed to load staff.");
+            }
         } catch (err) {
             toast.error("Failed to load staff.");
         } finally {

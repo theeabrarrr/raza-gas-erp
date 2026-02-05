@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/utils/supabase/server";
+import { getCurrentUserTenantId } from "@/lib/utils/tenantHelper";
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { revalidatePath } from "next/cache";
 
@@ -391,10 +392,22 @@ export async function rejectHandover(transactionId: string) {
 // 7. DASHBOARD STATS (Consolidated)
 export async function getDashboardStats() {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    const tenantId = user?.app_metadata?.tenant_id;
 
-    if (!tenantId) {
+    // 🔒 SECURITY FIX: Get tenant_id securely
+    let tenantId: string;
+    try {
+        const id = await getCurrentUserTenantId();
+        if (!id) return {
+            totalCash: 0,
+            activeDrivers: 0,
+            totalAssets: 0,
+            emptyCylinders: 0,
+            chartData: [],
+            recentActivity: []
+        };
+        tenantId = id;
+    } catch (error) {
+        console.error("Dashboard Stats Auth Error:", error);
         return {
             totalCash: 0,
             activeDrivers: 0,
@@ -423,13 +436,13 @@ export async function getDashboardStats() {
         supabase.from('orders')
             .select('created_at, total_amount')
             .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
-            .eq('tenant_id', tenantId)
+            .eq('tenant_id', tenantId)  // Double check tenant filter
             .order('created_at', { ascending: true }),
 
         // 6. Recent Activity
         supabase.from('orders')
             .select('id, friendly_id, status, total_amount, created_at, customers(name)')
-            .eq('tenant_id', tenantId)
+            .eq('tenant_id', tenantId)  // Double check tenant filter
             .order('created_at', { ascending: false })
             .limit(5)
     ]);
@@ -476,4 +489,34 @@ export async function getDashboardStats() {
         chartData,
         recentActivity
     };
+}
+
+/**
+ * Get recent orders for dashboard (with tenant filter)
+ * Separate export for granular partial hydration if needed.
+ */
+export async function getRecentOrders(limit: number = 10) {
+    const supabase = await createClient();
+
+    let tenantId: string;
+    try {
+        const id = await getCurrentUserTenantId();
+        if (!id) return { success: false, error: 'Authentication required' };
+        tenantId = id;
+    } catch (error) {
+        return { success: false, error: 'Authentication required' };
+    }
+
+    const { data, error } = await supabase
+        .from('orders')
+        .select('*, customer:customers(name), driver:users!driver_id(name)')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+    if (error) {
+        return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
 }

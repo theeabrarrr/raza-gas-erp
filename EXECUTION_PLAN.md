@@ -125,11 +125,11 @@ export async function getCurrentUser() {
 ```
 
 **Acceptance Criteria:**
-- [ ] File created at correct path
-- [ ] TypeScript compiles without errors
-- [ ] Functions are properly typed
-- [ ] Error handling implemented
-- [ ] Comments/JSDoc added
+- [x] File created at correct path
+- [x] TypeScript compiles without errors
+- [x] Functions are properly typed
+- [x] Error handling implemented
+- [x] Comments/JSDoc added
 
 **Test:**
 ```typescript
@@ -304,11 +304,11 @@ export async function updateStaffUser(
 ```
 
 **Acceptance Criteria:**
-- [ ] All functions use `getCurrentUserTenantId()`
-- [ ] `.eq('tenant_id', tenantId)` added to all queries
-- [ ] Error handling for authentication failures
-- [ ] Security logging for cross-tenant attempts
-- [ ] TypeScript types correct
+- [x] All functions use `getCurrentUserTenantId()`
+- [x] `.eq('tenant_id', tenantId)` added to all queries
+- [x] Error handling for authentication failures
+- [x] Security logging for cross-tenant attempts
+- [x] TypeScript types correct
 
 **Test:**
 1. Login as Admin in Tenant A
@@ -418,11 +418,11 @@ CREATE POLICY "users_delete_same_tenant" ON users
 ```
 
 **Acceptance Criteria:**
-- [ ] All old policies dropped
-- [ ] New policies created successfully
-- [ ] Policies tested for tenant isolation
-- [ ] Super admin can still see all users
-- [ ] Regular admins cannot see other tenants
+- [x] All old policies dropped
+- [x] New policies created successfully
+- [x] Policies tested for tenant isolation
+- [x] Super admin can still see all users
+- [x] Regular admins cannot see other tenants
 
 **Test:**
 ```sql
@@ -509,10 +509,10 @@ CREATE POLICY "wallet_insert_admin_only" ON employee_wallets
 ```
 
 **Acceptance Criteria:**
-- [ ] Public policies removed
-- [ ] Users can only see their own wallet
-- [ ] Admins can see all wallets in their tenant
-- [ ] No cross-tenant wallet access possible
+- [x] Public policies removed
+- [x] Users can only see their own wallet
+- [x] Admins can see all wallets in their tenant
+- [x] No cross-tenant wallet access possible
 
 **Test:**
 ```sql
@@ -587,10 +587,10 @@ CREATE POLICY "handover_update_admin_verify" ON handover_logs
 ```
 
 **Acceptance Criteria:**
-- [ ] Drivers can only see their own handovers
-- [ ] Admins can see all handovers in their tenant
-- [ ] No cross-tenant handover visibility
-- [ ] Only admins can update (verify) handovers
+- [x] Drivers can only see their own handovers
+- [x] Admins can see all handovers in their tenant
+- [x] No cross-tenant handover visibility
+- [x] Only admins can update (verify) handovers
 
 ---
 
@@ -720,10 +720,10 @@ export async function getRecentOrders(limit: number = 10) {
 ```
 
 **Acceptance Criteria:**
-- [ ] All dashboard queries filter by tenant_id
-- [ ] Import and use `getCurrentUserTenantId()`
-- [ ] Error handling for authentication failures
-- [ ] Dashboard displays correct tenant-specific data
+- [x] All dashboard queries filter by tenant_id
+- [x] Import and use `getCurrentUserTenantId()`
+- [x] Error handling for authentication failures
+- [x] Dashboard displays correct tenant-specific data
 
 **Test:**
 1. Login as Admin in different tenants
@@ -861,10 +861,10 @@ export async function getOutstandingBalances() {
 ```
 
 **Acceptance Criteria:**
-- [ ] All finance queries filter by tenant_id
-- [ ] Customer verification before fetching ledgers
-- [ ] Error handling implemented
-- [ ] No cross-tenant financial data access
+- [x] All finance queries filter by tenant_id
+- [x] Customer verification before fetching ledgers
+- [x] Error handling implemented
+- [x] No cross-tenant financial data access
 
 ---
 
@@ -990,10 +990,10 @@ export async function approveExpense(expenseId: string) {
 ```
 
 **Acceptance Criteria:**
-- [ ] All expense queries filter by tenant_id
-- [ ] Tenant verification before updates
-- [ ] Security logging for cross-tenant attempts
-- [ ] TypeScript types correct
+- [x] All expense queries filter by tenant_id
+- [x] Tenant verification before updates
+- [x] Security logging for cross-tenant attempts
+- [x] TypeScript types correct
 
 ---
 
@@ -1324,11 +1324,11 @@ export async function getDriverCommissionReport(driverId: string, dateRange: Dat
 ```
 
 **Acceptance Criteria:**
-- [ ] All report functions implemented
-- [ ] Tenant filtering on all queries
-- [ ] Calculations are accurate
-- [ ] Error handling implemented
-- [ ] TypeScript types correct
+- [x] All report functions implemented
+- [x] Tenant filtering on all queries
+- [x] Calculations are accurate
+- [x] Error handling implemented
+- [x] TypeScript types correct
 
 ---
 
@@ -1680,13 +1680,13 @@ export default function FinanceReportsPage() {
 ```
 
 **Acceptance Criteria:**
-- [ ] Page renders without errors
-- [ ] All report types selectable
-- [ ] Date/month inputs work correctly
-- [ ] Reports generate and display data
-- [ ] CSV export functional
-- [ ] Charts render properly
-- [ ] Responsive design
+- [x] Page renders without errors
+- [x] All report types selectable
+- [x] Date/month inputs work correctly
+- [x] Reports generate and display data
+- [x] CSV export functional
+- [x] Charts render properly
+- [x] Responsive design
 
 ---
 
@@ -1845,12 +1845,12 @@ import { generateSalesReportPDF, generateMonthlyReportPDF, generateOutstandingBa
 ```
 
 **Acceptance Criteria:**
-- [ ] jsPDF installed successfully
-- [ ] PDF export utility created
-- [ ] Export buttons added to UI
-- [ ] PDFs generate with correct formatting
-- [ ] Company logo/branding added (optional)
-- [ ] PDFs are print-ready
+- [x] jsPDF installed successfully
+- [x] PDF export utility created
+- [x] Export buttons added to UI
+- [x] PDFs generate with correct formatting
+- [x] Company logo/branding added (optional)
+- [x] PDFs are print-ready
 
 ---
 
@@ -1879,9 +1879,9 @@ import { generateSalesReportPDF, generateMonthlyReportPDF, generateOutstandingBa
 ```
 
 **Acceptance Criteria:**
-- [ ] Link visible in admin sidebar/navbar
-- [ ] Link navigates to reports page
-- [ ] Active state styling works
+- [x] Link visible in admin sidebar/navbar
+- [x] Link navigates to reports page
+- [x] Active state styling works
 
 ---
 

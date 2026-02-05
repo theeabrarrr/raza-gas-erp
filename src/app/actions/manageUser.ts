@@ -15,6 +15,149 @@ const supabaseAdmin = createClient(
 );
 
 import { Database } from '@/types/database.types';
+import { createClient as createServerClient } from '@/utils/supabase/server';
+import { getCurrentUserTenantId } from '@/lib/utils/tenantHelper';
+
+/**
+ * Get all staff users for the current tenant
+ * SECURITY: Filters by authenticated user's tenant_id
+ */
+export async function getStaffUsers() {
+    const supabase = await createServerClient()
+
+    // 🔒 SECURITY FIX: Get current user's tenant_id
+    let tenantId: string
+    try {
+        tenantId = await getCurrentUserTenantId() as string
+    } catch (error) {
+        return {
+            success: false,
+            error: 'Authentication required or tenant not assigned'
+        }
+    }
+
+    // 🔒 SECURITY FIX: Filter by both role AND tenant_id
+    // We join with profiles to get vehicle_number and phone_number if needed
+    const { data, error } = await supabase
+        .from('users')
+        .select('*, profiles(vehicle_number, phone_number)')
+        .eq('role', 'staff')
+        .eq('tenant_id', tenantId)  // ✅ FIXED: Added tenant filter
+        .order('created_at', { ascending: false })
+
+    if (error) {
+        console.error('Error fetching staff:', error)
+        return { success: false, error: error.message }
+    }
+
+    return { success: true, data }
+}
+
+/**
+ * Get all drivers for the current tenant
+ * SECURITY: Filters by authenticated user's tenant_id
+ */
+export async function getDriverUsers() {
+    const supabase = await createServerClient()
+
+    let tenantId: string
+    try {
+        tenantId = await getCurrentUserTenantId() as string
+    } catch (error) {
+        return {
+            success: false,
+            error: 'Authentication required'
+        }
+    }
+
+    const { data, error } = await supabase
+        .from('users')
+        .select('*, profiles(vehicle_number, phone_number)')
+        .eq('role', 'driver')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false })
+
+    if (error) {
+        return { success: false, error: error.message }
+    }
+
+    return { success: true, data }
+}
+
+/**
+ * Get staff user by ID (with tenant verification)
+ * SECURITY: Verifies the staff belongs to current user's tenant
+ */
+export async function getStaffUserById(userId: string) {
+    const supabase = await createServerClient()
+
+    let tenantId: string
+    try {
+        tenantId = await getCurrentUserTenantId() as string
+    } catch (error) {
+        return { success: false, error: 'Authentication required' }
+    }
+
+    const { data, error } = await supabase
+        .from('users')
+        .select('*, profiles(*)')
+        .eq('id', userId)
+        .eq('tenant_id', tenantId)
+        .single()
+
+    if (error) {
+        return { success: false, error: 'Staff not found or access denied' }
+    }
+
+    return { success: true, data }
+}
+
+/**
+ * Update staff user (with tenant verification)
+ * SECURITY: Prevents cross-tenant updates
+ */
+export async function updateStaffUser(
+    userId: string,
+    updates: { name?: string; phone?: string; status?: string }
+) {
+    const supabase = await createServerClient()
+
+    let tenantId: string
+    try {
+        tenantId = await getCurrentUserTenantId() as string
+    } catch (error) {
+        return { success: false, error: 'Authentication required' }
+    }
+
+    // 🔒 SECURITY: First verify the user belongs to current tenant
+    const { data: existingUser, error: fetchError } = await supabase
+        .from('users')
+        .select('id, tenant_id')
+        .eq('id', userId)
+        .single()
+
+    if (fetchError || !existingUser) {
+        return { success: false, error: 'User not found' }
+    }
+
+    if (existingUser.tenant_id !== tenantId) {
+        // 🚨 SECURITY: Attempted cross-tenant access
+        console.error(`SECURITY ALERT: Cross-tenant access attempt. User ${userId} not in tenant ${tenantId}`)
+        return { success: false, error: 'Access denied' }
+    }
+
+    // ✅ Safe to update now
+    const { error: updateError } = await supabase
+        .from('users')
+        .update(updates)
+        .eq('id', userId)
+
+    if (updateError) {
+        return { success: false, error: updateError.message }
+    }
+
+    return { success: true }
+}
 
 export async function updateUser(prevState: any, formData: FormData) {
     const id = formData.get('id') as string;

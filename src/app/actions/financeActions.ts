@@ -1,6 +1,7 @@
 'use server';
 
 import { createClient } from "@/utils/supabase/server";
+import { getCurrentUserTenantId } from "@/lib/utils/tenantHelper";
 import { revalidatePath } from "next/cache";
 
 // 1. Get Totals (Live Calculation)
@@ -158,4 +159,110 @@ export async function createTransaction(formData: FormData) {
         console.error("Transaction Error:", err);
         return { error: err.message };
     }
+}
+
+// 5. GET LEDGER ENTRIES (Customer History)
+// Mapped to 'transactions' table as 'ledgers' does not exist
+export async function getLedgerEntries(customerId: string) {
+    const supabase = await createClient();
+
+    // 🔒 SECURITY FIX: Get and verify tenant
+    let tenantId: string;
+    try {
+        const id = await getCurrentUserTenantId();
+        if (!id) return { success: false, error: 'Authentication required' };
+        tenantId = id;
+    } catch (error) {
+        return { success: false, error: 'Authentication required' };
+    }
+
+    // 🔒 First verify customer belongs to tenant
+    const { data: customer, error: customerError } = await supabase
+        .from('customers')
+        .select('tenant_id')
+        .eq('id', customerId)
+        .eq('tenant_id', tenantId)  // ✅ Verify tenant match
+        .single();
+
+    if (customerError || !customer) {
+        return { success: false, error: 'Customer not found or access denied' };
+    }
+
+    // ✅ Now safe to fetch transactions (ledger)
+    const { data, error } = await supabase
+        .from('transactions') // Schema mapped from 'ledgers'
+        .select('*')
+        .eq('customer_id', customerId)
+        .eq('tenant_id', tenantId)  // ✅ ADDED
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+}
+
+// 6. GET CASH BOOK ENTRIES (Company Ledger)
+// Mapped to 'company_ledger' table
+export async function getCashBookEntries(filters?: { startDate?: string, endDate?: string }) {
+    const supabase = await createClient();
+
+    let tenantId: string;
+    try {
+        const id = await getCurrentUserTenantId();
+        if (!id) return { success: false, error: 'Authentication required' };
+        tenantId = id;
+    } catch (error) {
+        return { success: false, error: 'Authentication required' };
+    }
+
+    let query = supabase
+        .from('company_ledger') // Schema mapped from 'cash_book_entries'
+        .select('*, user:users(name)')
+        .eq('tenant_id', tenantId)  // ✅ ADDED
+        .order('created_at', { ascending: false });
+
+    if (filters?.startDate) {
+        query = query.gte('created_at', filters.startDate);
+    }
+
+    if (filters?.endDate) {
+        query = query.lte('created_at', filters.endDate);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+        return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
+}
+
+// 7. GET OUTSTANDING BALANCES
+export async function getOutstandingBalances() {
+    const supabase = await createClient();
+
+    let tenantId: string;
+    try {
+        const id = await getCurrentUserTenantId();
+        if (!id) return { success: false, error: 'Authentication required' };
+        tenantId = id;
+    } catch (error) {
+        return { success: false, error: 'Authentication required' };
+    }
+
+    const { data, error } = await supabase
+        .from('customers')
+        .select('id, name, phone, current_balance') // 'current_balance' is the column name in createTransaction
+        .eq('tenant_id', tenantId)  // ✅ ADDED
+        .gt('current_balance', 0)  // Only customers with outstanding balance (Debt)
+        .order('current_balance', { ascending: false });
+
+    if (error) {
+        return { success: false, error: error.message };
+    }
+
+    return { success: true, data };
 }
