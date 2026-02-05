@@ -2,6 +2,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { getCurrentUserTenantId } from "@/lib/utils/tenantHelper";
+import { logSecurityEvent } from "@/lib/utils/auditLogger";
 import { revalidatePath } from "next/cache";
 
 /**
@@ -242,7 +243,12 @@ export async function approveExpense(expenseId: string) {
     }
 
     if (expense.tenant_id !== tenantId) {
-        console.error(`SECURITY: Cross-tenant expense access attempt`);
+        await logSecurityEvent('cross_tenant_attempt', {
+            targetResource: 'expenses',
+            tenantId: tenantId,
+            attemptedTenantId: expense.tenant_id,
+            action: 'approve_expense'
+        });
         return { error: 'Access denied' };
     }
 
@@ -293,7 +299,12 @@ export async function rejectExpense(expenseId: string) {
     }
 
     if (expense.tenant_id !== tenantId) {
-        console.error(`SECURITY: Cross-tenant expense access attempt`);
+        await logSecurityEvent('cross_tenant_attempt', {
+            targetResource: 'expenses',
+            tenantId: tenantId,
+            attemptedTenantId: expense.tenant_id,
+            action: 'reject_expense'
+        });
         return { error: 'Access denied' };
     }
 

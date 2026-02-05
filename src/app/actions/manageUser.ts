@@ -17,6 +17,7 @@ const supabaseAdmin = createClient(
 import { Database } from '@/types/database.types';
 import { createClient as createServerClient } from '@/utils/supabase/server';
 import { getCurrentUserTenantId } from '@/lib/utils/tenantHelper';
+import { logSecurityEvent } from '@/lib/utils/auditLogger';
 
 /**
  * Get all staff users for the current tenant
@@ -142,7 +143,13 @@ export async function updateStaffUser(
 
     if (existingUser.tenant_id !== tenantId) {
         // 🚨 SECURITY: Attempted cross-tenant access
-        console.error(`SECURITY ALERT: Cross-tenant access attempt. User ${userId} not in tenant ${tenantId}`)
+        await logSecurityEvent('cross_tenant_attempt', {
+            userId: userId,
+            targetResource: 'users',
+            tenantId: tenantId, // The attacker's tenant (or current user's)
+            attemptedTenantId: existingUser.tenant_id, // The target resource's tenant
+            action: 'update_staff_user'
+        });
         return { success: false, error: 'Access denied' }
     }
 
