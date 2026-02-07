@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Cylinder, Users, Settings, LogOut, Briefcase, ShoppingCart, Database, CheckSquare, ClipboardList, Landmark, FileText, Banknote } from "lucide-react";
+import { LayoutDashboard, Cylinder, Users, Settings, Briefcase, ShoppingCart, Database, CheckSquare, ClipboardList, Landmark, FileText, Banknote } from "lucide-react";
 import { cn } from "@/lib/utils";
 import LogoutBtn from "@/components/LogoutBtn";
 
@@ -45,7 +45,10 @@ export function AdminSidebar() {
                         <Cylinder className="w-5 h-5 text-primary" />
                     </span>
                     {loading ? (
-                        <span className="h-6 w-24 bg-slate-100 animate-pulse rounded block" />
+                        <>
+                            <span className="sr-only">Loading tenant name...</span>
+                            <span aria-hidden="true" className="h-6 w-24 bg-slate-100 animate-pulse rounded block" />
+                        </>
                     ) : (
                         tenantName
                     )}
@@ -59,6 +62,7 @@ export function AdminSidebar() {
                         <Link
                             key={item.href}
                             href={item.href}
+                            aria-current={isActive ? 'page' : undefined}
                             className={cn(
                                 "flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors",
                                 isActive
